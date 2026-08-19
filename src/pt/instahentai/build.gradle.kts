@@ -1,8 +1,10 @@
-ext {
-    set("extName", "InstaHentai")
-    set("extClass", ".InstaHentai")
-    set("extVersionCode", 1)
-    set("isNsfw", true)
+plugins {
+    id("keiyoushi.extension")
 }
 
-apply(from = "$rootDir/common.gradle")
+ext {
+    extName = "InstaHentai"
+    extClass = ".InstaHentai"
+    extVersionCode = 1
+    isNsfw = true
+}
