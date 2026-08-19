@@ -1,14 +1,17 @@
+import io.github.keiyoushi.gradle.api.ContentWarning
+
 plugins {
-    id("com.android.application")
-    id("kotlinx-serialization")
+    alias(kei.plugins.extension)
 }
 
-apply {
-    from("$rootDir/common.gradle")
-}
+keiyoushi {
+    name = "InstaHentai"
+    versionCode = 1 // Altere para o número correto (geralmente segue a ordem cronológica)
+    contentWarning = ContentWarning.NSFW // Se for +18
+    libVersion = "1.6"
 
-dependencies {
-    implementation(project(":core"))
-    implementation(project(":lib-i18n"))
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
+    source {
+        lang = "pt-BR"
+        baseUrl = "https://instahentai.com" // Confirme se a URL base correta é essa
+    }
 }
