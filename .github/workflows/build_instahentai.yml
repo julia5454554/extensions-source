@@ -15,6 +15,9 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Format code with Spotless
+        run: ./gradlew spotlessApply
+
       - name: Build APK
         run: ./gradlew :src:pt:instahentai:assembleDebug
 
