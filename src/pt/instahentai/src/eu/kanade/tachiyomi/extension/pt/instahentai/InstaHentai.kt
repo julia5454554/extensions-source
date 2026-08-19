@@ -8,9 +8,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import io.github.keiyoushi.gradle.api.Source
 
-@Source
 class InstaHentai : ParsedHttpSource() {
 
     override val name = "InstaHentai"
