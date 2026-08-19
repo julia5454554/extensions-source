@@ -9,9 +9,4 @@ keiyoushi {
     versionCode = 1
     contentWarning = ContentWarning.NSFW
     libVersion = "1.6"
-
-    source {
-        lang = "pt-BR"
-        baseUrl = "https://instahentai.com"
-    }
 }
