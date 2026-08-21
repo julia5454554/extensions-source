@@ -14,6 +14,7 @@ import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.net.URLEncoder
 
 @Source
 class HentaiDaTia(
@@ -26,7 +27,9 @@ class HentaiDaTia(
     override val supportsLatest = true
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+        .add("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
         .add("Referer", "$baseUrl/")
 
     // Populares
@@ -36,8 +39,7 @@ class HentaiDaTia(
     }
 
     override fun popularMangaParse(response: Response): MangasPage {
-        val document = response.asJsoup()
-        return parseMangaList(document)
+        return parseMangaList(response.asJsoup())
     }
 
     // Mais Recentes
@@ -46,34 +48,57 @@ class HentaiDaTia(
 
     // Busca
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val url = if (page == 1) "$baseUrl/?s=$query" else "$baseUrl/page/$page/?s=$query"
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        val url = if (page == 1) {
+            "$baseUrl/?s=$encodedQuery"
+        } else {
+            "$baseUrl/page/$page/?s=$encodedQuery"
+        }
         return GET(url, headers)
     }
 
     override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
 
     private fun parseMangaList(document: Document): MangasPage {
-        val elements = document.select("article, div.post, div.post-item, .entry")
+        // Detecta se o Cloudflare bloqueou a requisição HTTP em background
+        val docTitle = document.title().lowercase()
+        if (docTitle.contains("just a moment") || docTitle.contains("attention required") || document.selectFirst("#challenge-running, #challenge-form") != null) {
+            throw Exception("Cloudflare ativo: abra na WebView, resolva o desafio e puxe a tela para atualizar.")
+        }
+
+        // Tenta capturar os posts usando tags de artigos ou classes alternativas de temas WordPress
+        var elements = document.select("article")
+        if (elements.isEmpty()) {
+            elements = document.select(".type-post, div.post, div.post-item, div.box-single, div.episodes, .manga-item")
+        }
 
         val mangas = elements.mapNotNull { element ->
-            val link = element.selectFirst("h1 a, h2 a, h3 a, .entry-title a, a.post-thumbnail, a") ?: return@mapNotNull null
-            val href = link.attr("abs:href")
+            val link = element.selectFirst("h1 a, h2 a, h3 a, .entry-title a, a.post-thumbnail, a[rel='bookmark']")
+                ?: element.selectFirst("a")
+                ?: return@mapNotNull null
 
-            if (href.isEmpty() || href == "$baseUrl/" || href.contains("/category/") || href.contains("/tag/")) {
+            val href = link.attr("abs:href").ifEmpty { link.attr("href") }
+
+            if (href.isEmpty() || href == "$baseUrl/" || href == "$baseUrl" ||
+                href.contains("/category/") || href.contains("/tag/") ||
+                href.contains("/page/") || href.contains("#")
+            ) {
                 return@mapNotNull null
             }
 
             val titleText = element.selectFirst("h1, h2, h3, .entry-title")?.text()
-                ?: link.attr("title").ifEmpty { link.text() }
+                ?.ifEmpty { link.attr("title") }
+                ?.ifEmpty { link.text() }
+                ?: return@mapNotNull null
 
-            if (titleText.isEmpty()) return@mapNotNull null
+            if (titleText.isBlank()) return@mapNotNull null
 
-            val img = element.selectFirst("img")
+            val img = element.selectFirst("img") ?: link.selectFirst("img")
             val thumb = img?.let { extractImageUrl(it) } ?: ""
 
             SManga.create().apply {
                 setUrlWithoutDomain(href)
-                title = titleText
+                title = titleText.trim()
                 thumbnail_url = thumb
             }
         }.distinctBy { it.url }
@@ -86,7 +111,7 @@ class HentaiDaTia(
     override fun mangaDetailsParse(response: Response): SManga {
         val document = response.asJsoup()
         return SManga.create().apply {
-            title = document.selectFirst("h1.entry-title, h1.post-title, h1")?.text() ?: ""
+            title = document.selectFirst("h1.entry-title, h1.post-title, h1")?.text()?.trim() ?: ""
 
             val genres = document.select(".entry-categories a, .entry-tags a, .post-tags a, a[rel='tag']")
                 .map { it.text() }
@@ -142,6 +167,7 @@ class HentaiDaTia(
     private fun extractImageUrl(element: Element): String {
         return element.attr("abs:data-src")
             .ifEmpty { element.attr("abs:data-lazy-src") }
+            .ifEmpty { element.attr("abs:data-cfsrc") }
             .ifEmpty { element.attr("abs:data-orig-file") }
             .ifEmpty { element.attr("abs:src") }
     }
