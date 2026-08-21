@@ -38,11 +38,41 @@ class HentaiDaTia(
         .add("Referer", "$baseUrl/")
 
     private fun extractImageUrl(element: Element): String {
-        return element.attr("abs:data-src")
+        // Tenta atributos comuns de lazy load, mas ignora placeholders data:image
+        val direct = element.attr("abs:data-src")
             .ifEmpty { element.attr("abs:data-lazy-src") }
             .ifEmpty { element.attr("abs:data-cfsrc") }
             .ifEmpty { element.attr("abs:data-orig-file") }
             .ifEmpty { element.attr("abs:src") }
+
+        if (direct.isNotEmpty() && !direct.startsWith("data:image")) {
+            return direct
+        }
+
+        // Se não encontrou, tenta srcset/data-srcset (pega a imagem de maior largura)
+        val srcset = element.attr("data-srcset")
+            .ifEmpty { element.attr("srcset") }
+
+        if (srcset.isNotEmpty()) {
+            val candidates = srcset.split(",").mapNotNull { entry ->
+                val parts = entry.trim().split(Regex("\\s+"))
+                if (parts.isEmpty()) return@mapNotNull null
+                val url = parts[0]
+                val width = parts.getOrNull(1)?.removeSuffix("w")?.toIntOrNull()
+                if (url.startsWith("http") || url.startsWith("/")) {
+                    width to url
+                } else null
+            }
+
+            // Escolhe a imagem com maior largura, senão a primeira
+            val best = candidates.maxByOrNull { it.first ?: 0 } ?: candidates.firstOrNull()
+            if (best != null) {
+                return if (best.second.startsWith("http")) best.second
+                       else baseUrl + best.second // resolve URL relativa
+            }
+        }
+
+        return ""
     }
 
     private fun genericMangaFromElement(element: Element): SManga = SManga.create().apply {
@@ -169,13 +199,29 @@ class HentaiDaTia(
             .substringAfterLast("chapter=", "")
             .substringBefore("&")
 
-        val gallerySelector = if (chapterId.isNotEmpty()) {
-            "#galeria-$chapterId img"
+        // Seletores possíveis, do mais específico ao mais genérico
+        val selectors = if (chapterId.isNotEmpty()) {
+            listOf(
+                "#galeria-$chapterId img",
+                "div.listaImagens #galeria-$chapterId img",
+                "div.listaImagens img",
+                "article img",
+                ".entry-content img"
+            )
         } else {
-            "div.listaImagens ul.post-fotos img, .entry-content img, article img"
+            listOf(
+                "div.listaImagens ul.post-fotos img",
+                "div.listaImagens img",
+                "article img",
+                ".entry-content img"
+            )
         }
 
-        val images = document.select(gallerySelector)
+        var images = emptyList<Element>()
+        for (selector in selectors) {
+            images = document.select(selector)
+            if (images.isNotEmpty()) break
+        }
 
         val pages = mutableListOf<Page>()
         var index = 0
