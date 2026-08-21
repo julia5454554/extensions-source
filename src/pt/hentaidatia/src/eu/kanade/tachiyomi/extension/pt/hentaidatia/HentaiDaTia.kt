@@ -2,17 +2,18 @@ package eu.kanade.tachiyomi.extension.pt.hentaidatia
 
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.FilterList
+import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.source.online.ParsedHttpSource
+import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.annotation.Source
 import okhttp3.Request
-import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
+import okhttp3.Response
 
 @Source
-class HentaiDaTia : ParsedHttpSource() {
+class HentaiDaTia : HttpSource() {
 
     override val name = "HentaiDaTia"
     override val baseUrl = "https://hentaidatia.com"
@@ -21,47 +22,57 @@ class HentaiDaTia : ParsedHttpSource() {
 
     // Populares
     override fun popularMangaRequest(page: Int): Request = GET("$baseUrl/page/$page/", headers)
-    override fun popularMangaSelector(): String = "article, div.post-item, .manga-item"
-    override fun popularMangaFromElement(element: Element): SManga = SManga.create().apply {
-        setUrlWithoutDomain(element.selectFirst("a")?.attr("href") ?: "")
-        title = element.selectFirst("h2, h3, .entry-title, .title")?.text() ?: ""
-        thumbnail_url = element.selectFirst("img")?.let { img ->
-            img.attr("abs:data-src").ifEmpty { img.attr("abs:src") }
+
+    override fun popularMangaParse(response: Response): MangasPage {
+        val document = response.asJsoup()
+        val mangas = document.select("article, div.post-item, .manga-item").map { element ->
+            SManga.create().apply {
+                setUrlWithoutDomain(element.selectFirst("a")?.attr("href") ?: "")
+                title = element.selectFirst("h2, h3, .entry-title, .title")?.text() ?: ""
+                thumbnail_url = element.selectFirst("img")?.let { img ->
+                    img.attr("abs:data-src").ifEmpty { img.attr("abs:src") }
+                }
+            }
         }
+        val hasNextPage = document.selectFirst("a.next, .nav-previous a") != null
+        return MangasPage(mangas, hasNextPage)
     }
-    override fun popularMangaNextPageSelector(): String = "a.next, .nav-previous a"
 
     // Mais Recentes
     override fun latestUpdatesRequest(page: Int): Request = popularMangaRequest(page)
-    override fun latestUpdatesSelector(): String = popularMangaSelector()
-    override fun latestUpdatesFromElement(element: Element): SManga = popularMangaFromElement(element)
-    override fun latestUpdatesNextPageSelector(): String = popularMangaNextPageSelector()
+    override fun latestUpdatesParse(response: Response): MangasPage = popularMangaParse(response)
 
     // Busca
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request =
         GET("$baseUrl/page/$page/?s=$query", headers)
-    override fun searchMangaSelector(): String = popularMangaSelector()
-    override fun searchMangaFromElement(element: Element): SManga = popularMangaFromElement(element)
-    override fun searchMangaNextPageSelector(): String = popularMangaNextPageSelector()
+
+    override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
 
     // Detalhes
-    override fun mangaDetailsParse(document: Document): SManga = SManga.create().apply {
-        title = document.selectFirst("h1.entry-title, h1.title")?.text() ?: ""
-        description = document.select(".entry-content p").text()
-        thumbnail_url = document.selectFirst(".entry-content img, .post-thumbnail img")?.let { img ->
-            img.attr("abs:data-src").ifEmpty { img.attr("abs:src") }
+    override fun mangaDetailsParse(response: Response): SManga {
+        val document = response.asJsoup()
+        return SManga.create().apply {
+            title = document.selectFirst("h1.entry-title, h1.title")?.text() ?: ""
+            description = document.select(".entry-content p").text()
+            thumbnail_url = document.selectFirst(".entry-content img, .post-thumbnail img")?.let { img ->
+                img.attr("abs:data-src").ifEmpty { img.attr("abs:src") }
+            }
         }
     }
 
     // Capítulos
-    override fun chapterListSelector(): String = "html"
-    override fun chapterFromElement(element: Element): SChapter = SChapter.create().apply {
-        setUrlWithoutDomain(element.ownerDocument()?.location() ?: "")
-        name = "Capítulo Único"
+    override fun chapterListParse(response: Response): List<SChapter> {
+        return listOf(
+            SChapter.create().apply {
+                setUrlWithoutDomain(response.request.url.encodedPath)
+                name = "Capítulo Único"
+            }
+        )
     }
 
     // Páginas de Leitura
-    override fun pageListParse(document: Document): List<Page> {
+    override fun pageListParse(response: Response): List<Page> {
+        val document = response.asJsoup()
         val pages = mutableListOf<Page>()
         val imgs = document.select(".entry-content img, .page-break img, .reading-content img")
         imgs.forEachIndexed { index, img ->
@@ -73,5 +84,5 @@ class HentaiDaTia : ParsedHttpSource() {
         return pages
     }
 
-    override fun imageUrlParse(document: Document): String = ""
+    override fun imageUrlParse(response: Response): String = ""
 }
