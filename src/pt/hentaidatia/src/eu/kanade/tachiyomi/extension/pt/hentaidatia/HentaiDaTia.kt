@@ -129,6 +129,11 @@ class HentaiDaTia(
     // Lista de Capítulos
     override fun chapterListParse(response: Response): List<SChapter> {
         val document = response.asJsoup()
+        // Obtém o caminho relativo da página do mangá (sem domínio e sem fragmentos)
+        val basePath = document.location()
+            .removePrefix(baseUrl)
+            .substringBefore("#")
+
         val multipleChapters = document.select("div.listaImagens div.galeriaTab")
 
         if (multipleChapters.isNotEmpty()) {
@@ -139,7 +144,8 @@ class HentaiDaTia(
                 SChapter.create().apply {
                     name = "Capítulo $chapterId" + (if (!title.isNullOrEmpty()) " - $title" else "")
                     chapter_number = chapterId.toFloatOrNull() ?: -1f
-                    setUrlWithoutDomain("${document.location()}#$chapterId")
+                    // Usa ?chapter= em vez de # para que o servidor receba a URL normalmente
+                    setUrlWithoutDomain("$basePath?chapter=$chapterId")
                 }
             }.reversed()
         }
@@ -148,7 +154,7 @@ class HentaiDaTia(
             SChapter.create().apply {
                 name = "Capítulo Único"
                 chapter_number = 1f
-                setUrlWithoutDomain(document.location())
+                setUrlWithoutDomain(basePath)
             },
         )
     }
@@ -156,11 +162,17 @@ class HentaiDaTia(
     // Lista de Páginas do Capítulo
     override fun pageListParse(response: Response): List<Page> {
         val document = response.asJsoup()
-        val chapterId = document.location().substringAfterLast("#", "")
+        val currentUrl = document.location()
 
-        val gallerySelector = when {
-            chapterId.isNotEmpty() -> "div.listaImagens #galeria-$chapterId img, #galeria-$chapterId img"
-            else -> "div.listaImagens ul.post-fotos img, .entry-content img, article img"
+        // Extrai o ID do capítulo do parâmetro ?chapter=
+        val chapterId = currentUrl
+            .substringAfterLast("chapter=", "")
+            .substringBefore("&")
+
+        val gallerySelector = if (chapterId.isNotEmpty()) {
+            "#galeria-$chapterId img"
+        } else {
+            "div.listaImagens ul.post-fotos img, .entry-content img, article img"
         }
 
         val images = document.select(gallerySelector)
@@ -179,7 +191,7 @@ class HentaiDaTia(
                 !lowerSrc.endsWith(".gif")
 
             if (isValid) {
-                pages.add(Page(index++, url = document.location(), imageUrl = src))
+                pages.add(Page(index++, url = currentUrl, imageUrl = src))
             }
         }
 
