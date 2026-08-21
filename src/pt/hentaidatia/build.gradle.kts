@@ -15,3 +15,7 @@ keiyoushi {
         baseUrl = "https://hentaidatia.com"
     }
 }
+
+dependencies {
+    implementation(project(":multisrc:gattsu"))
+}
