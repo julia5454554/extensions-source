@@ -9,7 +9,7 @@ import kotlin.time.Duration.Companion.seconds
 @Source
 class HentaiDaTia(
     override val lang: String = "pt-BR",
-    override val id: Long = 0L, // Coloque um ID único real
+    override val id: Long = 0L, // troque por um ID único na publicação
 ) : Gattsu() {
 
     override val name = "HentaiDaTia"
