@@ -13,11 +13,13 @@ import okhttp3.Request
 import okhttp3.Response
 
 @Source
-class HentaiDaTia : HttpSource() {
+class HentaiDaTia(
+    override val lang: String = "pt-BR",
+    override val id: Long = 0L,
+) : HttpSource() {
 
     override val name = "HentaiDaTia"
     override val baseUrl = "https://hentaidatia.com"
-    override val lang = "pt-BR"
     override val supportsLatest = true
 
     // Populares
@@ -66,7 +68,7 @@ class HentaiDaTia : HttpSource() {
             SChapter.create().apply {
                 setUrlWithoutDomain(response.request.url.encodedPath)
                 name = "Capítulo Único"
-            }
+            },
         )
     }
 
