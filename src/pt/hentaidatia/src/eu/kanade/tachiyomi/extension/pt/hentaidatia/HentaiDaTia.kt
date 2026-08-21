@@ -16,11 +16,13 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 @Source
-class HentaiDaTia : HttpSource() {
+class HentaiDaTia(
+    override val lang: String = "pt-BR",
+    override val id: Long = 0L,
+) : HttpSource() {
 
     override val name = "HentaiDaTia"
     override val baseUrl = "https://hentaidatia.com"
-    override val lang = "pt-BR"
     override val supportsLatest = true
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
@@ -56,14 +58,14 @@ class HentaiDaTia : HttpSource() {
         val mangas = elements.mapNotNull { element ->
             val link = element.selectFirst("h1 a, h2 a, h3 a, .entry-title a, a.post-thumbnail, a") ?: return@mapNotNull null
             val href = link.attr("abs:href")
-            
+
             if (href.isEmpty() || href == "$baseUrl/" || href.contains("/category/") || href.contains("/tag/")) {
                 return@mapNotNull null
             }
 
             val titleText = element.selectFirst("h1, h2, h3, .entry-title")?.text()
                 ?: link.attr("title").ifEmpty { link.text() }
-                
+
             if (titleText.isEmpty()) return@mapNotNull null
 
             val img = element.selectFirst("img")
