@@ -64,11 +64,10 @@ class HentaiDaTia(
                 } else null
             }
 
-            // Escolhe a imagem de maior largura, senão a primeira
             val best = candidates.maxByOrNull { it.first ?: 0 } ?: candidates.firstOrNull()
             if (best != null) {
                 return if (best.second.startsWith("http")) best.second
-                       else baseUrl + best.second // resolve URL relativa
+                       else baseUrl + best.second
             }
         }
 
@@ -159,47 +158,28 @@ class HentaiDaTia(
     // Lista de Capítulos
     override fun chapterListParse(response: Response): List<SChapter> {
         val document = response.asJsoup()
-
-        // Procura links que apontem para a página de galeria (com ou sem barra)
-        val galleryLinks = document.select("a[href*='/galeria/'], a[href*='/galeria?']")
-
-        if (galleryLinks.isNotEmpty()) {
-            val chapters = mutableListOf<SChapter>()
-            val seen = mutableSetOf<String>()
-
-            for (link in galleryLinks) {
-                val href = link.attr("abs:href")
-                // Extrai o ID do parâmetro "id" da query string
-                val galleryId = href.substringAfter("id=", "")
-                    .substringBefore("&")
-                    .substringBefore("#")
-                    .trim()
-
-                if (galleryId.isEmpty() || galleryId in seen) continue
-                seen.add(galleryId)
-
-                // Título pode estar no atributo title do link ou em elemento próximo
-                val title = link.attr("title")
-                    .ifBlank { link.parent()?.selectFirst("span, .galeriaTabTitulo")?.text() ?: "" }
-
-                SChapter.create().apply {
-                    name = "Capítulo $galleryId" + (if (title.isNotBlank()) " - $title" else "")
-                    chapter_number = galleryId.toFloatOrNull() ?: -1f
-                    // Define a URL limpa da galeria (apenas ?id=...)
-                    setUrlWithoutDomain("/galeria/?id=$galleryId")
-                }.let { chapters.add(it) }
-            }
-
-            if (chapters.isNotEmpty()) {
-                return chapters.reversed()
-            }
-        }
-
-        // Fallback: capítulo único (a própria página do mangá)
+        // Caminho relativo da página do mangá (sem domínio e sem query/fragmento)
         val basePath = document.location()
             .removePrefix(baseUrl)
             .substringBefore("#")
+            .substringBefore("?")
 
+        val multipleChapters = document.select("div.listaImagens div.galeriaTab")
+
+        if (multipleChapters.isNotEmpty()) {
+            return multipleChapters.map { element ->
+                val chapterId = element.attr("data-id")
+                val title = element.selectFirst("div.galeriaTabTitulo")?.text()
+
+                SChapter.create().apply {
+                    name = "Capítulo $chapterId" + (if (!title.isNullOrEmpty()) " - $title" else "")
+                    chapter_number = chapterId.toFloatOrNull() ?: -1f
+                    setUrlWithoutDomain("$basePath?chapter=$chapterId")
+                }
+            }.reversed()
+        }
+
+        // Se não houver múltiplas abas, é um capítulo único
         return listOf(
             SChapter.create().apply {
                 name = "Capítulo Único"
@@ -214,18 +194,19 @@ class HentaiDaTia(
         val document = response.asJsoup()
         val currentUrl = document.location()
 
-        // Detecta se estamos numa página de galeria
-        val isGalleryPage = currentUrl.contains("/galeria/") || currentUrl.contains("/galeria?")
+        // Extrai o ID do capítulo do parâmetro ?chapter= (se houver)
+        val chapterId = currentUrl
+            .substringAfterLast("chapter=", "")
+            .substringBefore("&")
 
-        // Seletores específicos para páginas de galeria e fallback para página do mangá
-        val selectors = if (isGalleryPage) {
+        // Seletores para imagens, dependendo se temos um capítulo específico ou não
+        val selectors = if (chapterId.isNotEmpty()) {
             listOf(
-                "div.galeria img",
+                "#galeria-$chapterId img",
+                "div.listaImagens #galeria-$chapterId img",
                 "div.listaImagens img",
-                ".entry-content img",
                 "article img",
-                "img.size-medium",
-                "img.attachment-medium"
+                ".entry-content img"
             )
         } else {
             listOf(
