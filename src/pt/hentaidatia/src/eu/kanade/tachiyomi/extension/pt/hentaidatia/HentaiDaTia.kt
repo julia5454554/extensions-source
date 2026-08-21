@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.extension.pt.hentaidatia
 
+import eu.kanade.tachiyomi.annotations.Nsfw
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
@@ -10,6 +11,7 @@ import okhttp3.Request
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
+@Nsfw
 class HentaiDaTia : ParsedHttpSource() {
 
     override val name = "HentaiDaTia"
