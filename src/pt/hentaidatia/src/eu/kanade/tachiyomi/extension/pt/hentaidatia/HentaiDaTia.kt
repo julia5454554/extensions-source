@@ -37,7 +37,6 @@ class HentaiDaTia(
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
 
-    // Helper para extrair imagens independente de atributos de lazy-load
     private fun extractImageUrl(element: Element): String {
         return element.attr("abs:data-src")
             .ifEmpty { element.attr("abs:data-lazy-src") }
@@ -106,12 +105,11 @@ class HentaiDaTia(
     // Detalhes do Mangá
     override fun mangaDetailsParse(response: Response): SManga {
         val document = response.asJsoup()
-        val post = document.selectFirst("div.post-box, article, .entry-content")
 
         return SManga.create().apply {
             title = document.selectFirst("h1.entry-title, h1.post-title, h1")?.text()?.trim() ?: ""
             author = document.select("ul.post-itens li:contains(Artista:) a, .entry-terms:contains(Artista) a").text()
-            
+
             val genres = document.select("ul.post-itens li:contains(Tags:) a, .entry-categories a, .entry-tags a, a[rel='tag']")
                 .map { it.text() }
                 .distinct()
@@ -155,12 +153,11 @@ class HentaiDaTia(
         )
     }
 
-    // Lista de Páginas do Capítulo (Onde ocorria a tela preta)
+    // Lista de Páginas do Capítulo
     override fun pageListParse(response: Response): List<Page> {
         val document = response.asJsoup()
         val chapterId = document.location().substringAfterLast("#", "")
 
-        // Tenta capturar pelo padrão de galerias com ID de abas ou fallback geral
         val gallerySelector = when {
             chapterId.isNotEmpty() -> "div.listaImagens #galeria-$chapterId img, #galeria-$chapterId img"
             else -> "div.listaImagens ul.post-fotos img, .entry-content img, article img"
@@ -175,7 +172,6 @@ class HentaiDaTia(
             val src = extractImageUrl(el)
             val lowerSrc = src.lowercase()
 
-            // Filtra anúncios/banners/gifs que não pertencem ao capítulo
             val isValid = src.isNotEmpty() &&
                 !lowerSrc.contains("logo") &&
                 !lowerSrc.contains("banner") &&
@@ -192,7 +188,6 @@ class HentaiDaTia(
 
     override fun imageUrlParse(response: Response): String = throw UnsupportedOperationException()
 
-    // Envia o Referer necessário para liberar o download das imagens
     override fun imageRequest(page: Page): Request {
         val newHeaders = headersBuilder()
             .set("Referer", page.url)
@@ -200,7 +195,4 @@ class HentaiDaTia(
 
         return GET(page.imageUrl!!, newHeaders)
     }
-
-    override fun latestUpdatesRequest(page: Int): Request = popularMangaRequest(page)
-    override fun latestUpdatesParse(response: Response): MangasPage = popularMangaParse(response)
 }
