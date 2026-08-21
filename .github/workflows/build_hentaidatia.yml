@@ -21,6 +21,9 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
+      - name: Format Code
+        run: ./gradlew :src:pt:hentaidatia:spotlessApply
+
       - name: Build Extension
         run: ./gradlew :src:pt:hentaidatia:assembleRelease
 
