@@ -37,9 +37,9 @@ class HentaisBlog(
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
 
-    // ============ EXTRAÇÃO DE IMAGEM ============
+    // ==================== EXTRAÇÃO DE IMAGEM ====================
     private fun extractImageUrl(element: Element): String {
-        // Tenta atributos comuns de lazy load, ignorando placeholders data:image
+        // 1. Tenta atributos comuns de lazy load, ignorando placeholders data:image
         val direct = element.attr("abs:data-src")
             .ifEmpty { element.attr("abs:data-lazy-src") }
             .ifEmpty { element.attr("abs:data-cfsrc") }
@@ -50,11 +50,11 @@ class HentaisBlog(
             return direct
         }
 
-        // Se não achou, tenta srcset/data-srcset e pega a maior imagem
+        // 2. Se não achou, tenta srcset/data-srcset e pega a maior imagem
         val srcset = element.attr("data-srcset")
             .ifEmpty { element.attr("srcset") }
         if (srcset.isNotEmpty()) {
-            val best = srcset.split(",").mapNotNull { entry ->
+            val candidates = srcset.split(",").mapNotNull { entry ->
                 val parts = entry.trim().split(Regex("\\s+"))
                 if (parts.isEmpty()) return@mapNotNull null
                 val url = parts[0]
@@ -62,17 +62,20 @@ class HentaisBlog(
                 if (url.startsWith("http") || url.startsWith("/")) {
                     width to url
                 } else null
-            }.maxByOrNull { it.first ?: 0 }
+            }
 
+            val best = candidates.maxByOrNull { it.first ?: 0 }
             if (best != null) {
                 return if (best.second.startsWith("http")) best.second
                        else baseUrl + best.second
             }
         }
-        return ""
+
+        // 3. Fallback para src original (mesmo que seja data:image, o filtro depois descarta)
+        return element.attr("abs:src")
     }
 
-    // ============ LISTAGEM (POPULARES) ============
+    // ==================== LISTAGEM (POPULARES) ====================
     override fun popularMangaRequest(page: Int): Request {
         val pageStr = if (page != 1) "page/$page/" else ""
         return GET("$baseUrl/$pageStr", headers)
@@ -81,7 +84,7 @@ class HentaisBlog(
     override fun popularMangaParse(response: Response): MangasPage {
         val document = response.asJsoup()
 
-        // Seletor correto para os cards: <a> que contém <span class="itemTitulo">
+        // Seletor para cards: <a> que contém <span class="itemTitulo">
         val items = document.select("a:has(span.itemTitulo)")
 
         val mangas = items.mapNotNull { a ->
@@ -110,11 +113,11 @@ class HentaisBlog(
         return MangasPage(mangas, hasNextPage)
     }
 
-    // ============ LISTAGEM (RECENTES) ============
+    // ==================== LISTAGEM (RECENTES) ====================
     override fun latestUpdatesRequest(page: Int): Request = popularMangaRequest(page)
     override fun latestUpdatesParse(response: Response): MangasPage = popularMangaParse(response)
 
-    // ============ BUSCA ============
+    // ==================== BUSCA ====================
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val url = baseUrl.toHttpUrl().newBuilder().apply {
             if (query.isNotEmpty()) {
@@ -129,7 +132,7 @@ class HentaisBlog(
 
     override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
 
-    // ============ DETALHES ============
+    // ==================== DETALHES DO MANGÁ ====================
     override fun mangaDetailsParse(response: Response): SManga {
         val document = response.asJsoup()
         return SManga.create().apply {
@@ -141,17 +144,18 @@ class HentaisBlog(
             status = SManga.COMPLETED
             val mainImg = document.selectFirst("div.post-capa img, .entry-content img, article img")
             thumbnail_url = mainImg?.let { extractImageUrl(it) }
+            // Se houver múltiplas galerias, atualiza sempre; senão, apenas uma vez
             update_strategy = if (document.selectFirst("div.listaImagens div.galeriaTab") != null)
                 UpdateStrategy.ALWAYS_UPDATE else UpdateStrategy.ONLY_FETCH_ONCE
         }
     }
 
-    // ============ CAPÍTULOS ============
+    // ==================== CAPÍTULOS ====================
     override fun chapterListParse(response: Response): List<SChapter> {
         val document = response.asJsoup()
         val basePath = document.location().removePrefix(baseUrl).substringBefore("#").substringBefore("?")
 
-        // Se houver múltiplos capítulos (ex.: galeriaTab), tenta detectar
+        // Tenta detectar múltiplos capítulos
         val multipleChapters = document.select("div.listaImagens div.galeriaTab")
         if (multipleChapters.isNotEmpty()) {
             return multipleChapters.map { element ->
@@ -175,35 +179,35 @@ class HentaisBlog(
         )
     }
 
-    // ============ PÁGINAS ============
+    // ==================== PÁGINAS DO CAPÍTULO ====================
     override fun pageListParse(response: Response): List<Page> {
         val document = response.asJsoup()
         val currentUrl = document.location()
 
         val chapterId = currentUrl.substringAfterLast("chapter=", "").substringBefore("&")
 
-        // Seletores amplos para capturar as imagens do conteúdo
+        // Seletores específicos para o site hentais.blog
         val selectors = if (chapterId.isNotEmpty()) {
             listOf(
                 "#galeria-$chapterId img",
                 "div.listaImagens #galeria-$chapterId img",
+                "span.aneSliderImagem img",      // seletor principal do site
+                "div.aneSliderImagem img",
+                ".aneSliderImagem img",
                 "div.listaImagens img",
                 "article img",
                 ".entry-content img",
-                ".post-content img",
-                "div[class*='content'] img",
-                "div[class*='conteudo'] img",
                 "div.post img"
             )
         } else {
             listOf(
+                "span.aneSliderImagem img",      // seletor principal do site
+                "div.aneSliderImagem img",
+                ".aneSliderImagem img",
                 "div.listaImagens ul.post-fotos img",
                 "div.listaImagens img",
                 "article img",
                 ".entry-content img",
-                ".post-content img",
-                "div[class*='content'] img",
-                "div[class*='conteudo'] img",
                 "div.post img"
             )
         }
@@ -219,17 +223,8 @@ class HentaisBlog(
 
         images.forEach { el ->
             val src = extractImageUrl(el)
-            val lowerSrc = src.lowercase()
-
-            // Filtra imagens que não fazem parte do capítulo
-            val isValid = src.isNotEmpty() &&
-                !lowerSrc.contains("logo") &&
-                !lowerSrc.contains("banner") &&
-                !lowerSrc.contains("discord") &&
-                !lowerSrc.contains("icon") &&
-                !lowerSrc.endsWith(".gif")
-
-            if (isValid) {
+            // Aceita apenas URLs não vazias e que não sejam placeholders
+            if (src.isNotEmpty() && !src.startsWith("data:image")) {
                 pages.add(Page(index++, url = currentUrl, imageUrl = src))
             }
         }
