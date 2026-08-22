@@ -18,7 +18,8 @@ import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
-import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 import kotlin.time.Duration.Companion.seconds
 
 @Source
@@ -39,10 +40,27 @@ class QuadrinhosDeSexo(
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
 
-    // Função auxiliar para obter o número da página atual a partir da URL
-    private fun currentPageFromRequest(request: Request): Int {
-        val url = request.url
-        return url.queryParameter("page")?.toIntOrNull() ?: 1
+    // ==================== EXTRAÇÃO DE IMAGEM ====================
+    private fun extractImageUrl(element: Element): String {
+        val direct = element.attr("abs:data-src")
+            .ifEmpty { element.attr("abs:data-lazy-src") }
+            .ifEmpty { element.attr("abs:data-cfsrc") }
+            .ifEmpty { element.attr("abs:data-orig-file") }
+            .ifEmpty { element.attr("abs:src") }
+        if (direct.isNotEmpty() && !direct.startsWith("data:image")) return direct
+
+        val srcset = element.attr("data-srcset").ifEmpty { element.attr("srcset") }
+        if (srcset.isNotEmpty()) {
+            val best = srcset.split(",").mapNotNull { entry ->
+                val parts = entry.trim().split(Regex("\\s+"))
+                if (parts.isEmpty()) return@mapNotNull null
+                val url = parts[0]
+                val width = parts.getOrNull(1)?.removeSuffix("w")?.toIntOrNull()
+                if (url.startsWith("http") || url.startsWith("/")) width to url else null
+            }.maxByOrNull { it.first ?: 0 }
+            if (best != null) return if (best.second.startsWith("http")) best.second else baseUrl + best.second
+        }
+        return element.attr("abs:src")
     }
 
     // ==================== LISTAGEM (POPULARES) ====================
@@ -61,22 +79,22 @@ class QuadrinhosDeSexo(
         for (i in 0 until jsonArray.length()) {
             val post = jsonArray.getJSONObject(i)
             val title = post.getJSONObject("title").getString("rendered")
-            val link = post.getString("link")
+            val link = post.getString("link")   // URL HTML da página do quadrinho
             val thumb = post.optString("jetpack_featured_media_url", "").ifEmpty {
                 val content = post.getJSONObject("content").getString("rendered")
-                val doc = Jsoup.parse(content)
+                val doc = org.jsoup.Jsoup.parse(content)
                 doc.selectFirst("img")?.attr("src") ?: ""
             }
 
             SManga.create().apply {
                 this.title = title
                 this.thumbnail_url = thumb
-                setUrlWithoutDomain(link)
+                setUrlWithoutDomain(link.removePrefix(baseUrl))   // guarda URL relativa da página HTML
             }.let { mangas.add(it) }
         }
 
-        val currentPage = currentPageFromRequest(response.request)
         val totalPages = response.header("X-WP-TotalPages")?.toIntOrNull() ?: 1
+        val currentPage = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
         val hasNextPage = currentPage < totalPages
 
         return MangasPage(mangas, hasNextPage)
@@ -97,31 +115,26 @@ class QuadrinhosDeSexo(
 
     override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
 
-    // ==================== DETALHES ====================
+    // ==================== DETALHES (AGORA USA HTML) ====================
     override fun mangaDetailsParse(response: Response): SManga {
-        val post = JSONObject(response.body.string())
-        val title = post.getJSONObject("title").getString("rendered")
-        val link = post.getString("link")
-        val thumb = post.optString("jetpack_featured_media_url", "").ifEmpty {
-            val content = post.getJSONObject("content").getString("rendered")
-            val doc = Jsoup.parse(content)
-            doc.selectFirst("img")?.attr("src") ?: ""
-        }
-        val description = post.getJSONObject("excerpt").getString("rendered")
-            .replace(Regex("<[^>]*>"), "").trim()
-
+        val document = response.asJsoup()
         return SManga.create().apply {
-            this.title = title
-            this.thumbnail_url = thumb
-            this.description = description
-            this.status = SManga.COMPLETED
-            this.genre = ""
-            this.author = ""
+            title = document.selectFirst("h1.entry-title, h1.post-title, h1")?.text()?.trim()
+                ?: document.title()
+            thumbnail_url = document.selectFirst("div.cn-thumb img, .entry-content img, article img")?.let {
+                extractImageUrl(it)
+            } ?: ""
+            description = document.selectFirst("meta[name='description']")?.attr("content")
+                ?: document.selectFirst(".cn-excerpt, .entry-content p")?.text()
+                ?: ""
+            author = document.selectFirst(".author, .entry-author, a[rel='author']")?.text() ?: ""
+            genre = document.select("a[rel='tag'], .entry-tags a, .tags a").map { it.text() }.distinct().joinToString(", ")
+            status = SManga.COMPLETED
             update_strategy = UpdateStrategy.ALWAYS_UPDATE
         }
     }
 
-    // ==================== CAPÍTULOS ====================
+    // ==================== CAPÍTULOS (HTML) ====================
     override fun chapterListParse(response: Response): List<SChapter> {
         val basePath = response.request.url.toString().removePrefix(baseUrl)
         return listOf(
@@ -133,28 +146,34 @@ class QuadrinhosDeSexo(
         )
     }
 
-    // ==================== PÁGINAS ====================
+    // ==================== PÁGINAS (HTML) ====================
     override fun pageListParse(response: Response): List<Page> {
-        val post = JSONObject(response.body.string())
-        val contentHtml = post.getJSONObject("content").getString("rendered")
-        val doc = Jsoup.parse(contentHtml)
+        val document = response.asJsoup()
+        val currentUrl = response.request.url.toString()
 
-        val images = doc.select("img")
-        val pages = mutableListOf<Page>()
-        var index = 0
+        // Seletores específicos para o conteúdo do quadrinho
+        val selectors = listOf(
+            ".cn-texts img",      // principal (conteúdo do tema)
+            "div.foto img",       // fallback
+            "article img",        // fallback
+            ".entry-content img", // fallback
+            "img"                 // último recurso
+        )
 
-        images.forEach { img ->
-            val src = img.attr("abs:src")
-                .ifEmpty { img.attr("data-src") }
-                .ifEmpty { img.attr("data-lazy-src") }
-                .ifEmpty { img.attr("data-orig-file") }
-                .ifEmpty { img.attr("src") }
-
-            if (src.isNotEmpty() && !src.startsWith("data:image")) {
-                pages.add(Page(index++, url = baseUrl, imageUrl = src))
-            }
+        var images = emptyList<Element>()
+        for (selector in selectors) {
+            images = document.select(selector)
+            if (images.isNotEmpty()) break
         }
 
+        val pages = mutableListOf<Page>()
+        var index = 0
+        images.forEach { el ->
+            val src = extractImageUrl(el)
+            if (src.isNotEmpty() && !src.startsWith("data:image")) {
+                pages.add(Page(index++, url = currentUrl, imageUrl = src))
+            }
+        }
         return pages
     }
 
