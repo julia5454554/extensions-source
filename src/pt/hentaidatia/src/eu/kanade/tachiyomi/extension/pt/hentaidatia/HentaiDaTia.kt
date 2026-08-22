@@ -1,11 +1,10 @@
 package eu.kanade.tachiyomi.extension.pt.hentaidatia
 
+import eu.kanade.tachiyomi.multisrc.gattsu.Gattsu
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.util.asJsoup
-import eu.kanade.tachiyomi.multisrc.gattsu.Gattsu
 import keiyoushi.annotation.Source
 import keiyoushi.network.rateLimit
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -18,7 +17,7 @@ import kotlin.time.Duration.Companion.seconds
 @Source
 class HentaiDaTia(
     override val lang: String = "pt-BR",
-    override val id: Long = 0L, // use um ID único real
+    override val id: Long = 0L, // troque por um ID único na publicação
 ) : Gattsu() {
 
     override val name = "HentaiDaTia"
@@ -28,10 +27,9 @@ class HentaiDaTia(
         .rateLimit(2, 1.seconds)
         .build()
 
-    // ---------- Overrides para listagem ----------
-
+    // ============ EXTRAÇÃO DE IMAGEM PARA MINIATURAS ============
     private fun extractImageUrl(element: Element): String {
-        // Mantém a lógica que já funcionava no seu código manual
+        // Tenta atributos comuns de lazy load, ignorando data:image
         val direct = element.attr("abs:data-src")
             .ifEmpty { element.attr("abs:data-lazy-src") }
             .ifEmpty { element.attr("abs:data-cfsrc") }
@@ -42,11 +40,11 @@ class HentaiDaTia(
             return direct
         }
 
+        // Se não achou, tenta srcset/data-srcset e pega a maior imagem
         val srcset = element.attr("data-srcset")
             .ifEmpty { element.attr("srcset") }
-
         if (srcset.isNotEmpty()) {
-            val candidates = srcset.split(",").mapNotNull { entry ->
+            val best = srcset.split(",").mapNotNull { entry ->
                 val parts = entry.trim().split(Regex("\\s+"))
                 if (parts.isEmpty()) return@mapNotNull null
                 val url = parts[0]
@@ -54,18 +52,17 @@ class HentaiDaTia(
                 if (url.startsWith("http") || url.startsWith("/")) {
                     width to url
                 } else null
-            }
+            }.maxByOrNull { it.first ?: 0 }
 
-            val best = candidates.maxByOrNull { it.first ?: 0 } ?: candidates.firstOrNull()
             if (best != null) {
                 return if (best.second.startsWith("http")) best.second
                        else baseUrl + best.second
             }
         }
-
         return ""
     }
 
+    // ============ CONVERSÃO GENÉRICA DE ELEMENTO PARA SManga ============
     private fun genericMangaFromElement(element: Element): SManga = SManga.create().apply {
         val titleEl = element.selectFirst("span.thumb-titulo, h2, h3, .entry-title")
         title = titleEl?.text()?.trim() ?: element.text().trim()
@@ -77,6 +74,7 @@ class HentaiDaTia(
         setUrlWithoutDomain(linkEl?.attr("href") ?: "")
     }
 
+    // ============ LISTAGEM (POPULARES) ============
     override fun popularMangaRequest(page: Int): Request {
         val pageStr = if (page != 1) "page/$page/" else ""
         return GET("$baseUrl/$pageStr", headers)
@@ -84,26 +82,38 @@ class HentaiDaTia(
 
     override fun popularMangaParse(response: Response): MangasPage {
         val document = response.asJsoup()
-        val elements = document.select("div.lista > ul > li div.thumb-conteudo, article.post, div.post")
+        // Seletor correto: div.thumb-conteudo (ou div.lista .thumb-conteudo)
+        val elements = document.select("div.thumb-conteudo")
 
         val mangas = elements.mapNotNull { el ->
             val link = el.selectFirst("a") ?: return@mapNotNull null
             val href = link.attr("abs:href")
 
-            if (href.isEmpty() || href == "$baseUrl/" || href.contains("/category/") || href.contains("/tag/")) {
+            // Filtra URLs indesejadas
+            if (href.isEmpty() ||
+                href == "$baseUrl/" ||
+                href.contains("/category/") ||
+                href.contains("/tag/") ||
+                href.contains("/page/") ||
+                href.contains("/galeria/")) {
                 return@mapNotNull null
             }
 
             genericMangaFromElement(el)
         }.distinctBy { it.url }
 
-        val hasNextPage = document.selectFirst("ul.paginacao li.next, a.next, .pagination a:contains(›)") != null
+        val hasNextPage = document.selectFirst(
+            "ul.paginacao li.next, a.next, .pagination a:contains(›), a.next.page-numbers"
+        ) != null
+
         return MangasPage(mangas, hasNextPage)
     }
 
+    // ============ LISTAGEM (RECENTES) ============
     override fun latestUpdatesRequest(page: Int): Request = popularMangaRequest(page)
     override fun latestUpdatesParse(response: Response): MangasPage = popularMangaParse(response)
 
+    // ============ BUSCA ============
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val url = baseUrl.toHttpUrl().newBuilder().apply {
             if (query.isNotEmpty()) {
@@ -114,7 +124,6 @@ class HentaiDaTia(
                 addPathSegment(page.toString())
             }
         }.build()
-
         return GET(url, headers)
     }
 
