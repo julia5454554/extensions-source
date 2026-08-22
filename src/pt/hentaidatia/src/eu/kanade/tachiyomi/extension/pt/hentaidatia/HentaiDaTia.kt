@@ -39,11 +39,11 @@ class HentaiDaTia(
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
-        .add("Cookie", "tia_idade_confirmada=1") // Cookie de maioridade
+        .add("Cookie", "tia_idade_confirmada=1") // Cookie para desbloquear o site
 
     // ==================== EXTRAÇÃO DE IMAGEM ====================
     private fun extractImageUrl(element: Element): String {
-        // Tenta atributos comuns de lazy load, ignorando placeholders data:image
+        // 1. Tenta atributos comuns de lazy load, ignorando placeholders data:image
         val direct = element.attr("abs:data-src")
             .ifEmpty { element.attr("abs:data-lazy-src") }
             .ifEmpty { element.attr("abs:data-cfsrc") }
@@ -54,7 +54,7 @@ class HentaiDaTia(
             return direct
         }
 
-        // Se não achou, tenta srcset/data-srcset e pega a maior imagem
+        // 2. Se não achou, tenta srcset/data-srcset e pega a maior imagem
         val srcset = element.attr("data-srcset")
             .ifEmpty { element.attr("srcset") }
         if (srcset.isNotEmpty()) {
@@ -75,10 +75,11 @@ class HentaiDaTia(
             }
         }
 
+        // 3. Fallback para src original (mesmo que seja data:image, o filtro depois descarta)
         return element.attr("abs:src")
     }
 
-    // ==================== LISTAGEM (POPULARES / RECENTES) ====================
+    // ==================== LISTAGEM (POPULARES) ====================
     override fun popularMangaRequest(page: Int): Request {
         val pageStr = if (page != 1) "page/$page/" else ""
         return GET("$baseUrl/$pageStr", headers)
@@ -86,8 +87,6 @@ class HentaiDaTia(
 
     override fun popularMangaParse(response: Response): MangasPage {
         val document = response.asJsoup()
-
-        // Seletor principal: div.thumb-conteudo (usado no site)
         val elements = document.select("div.thumb-conteudo")
 
         val mangas = elements.mapNotNull { el ->
@@ -105,7 +104,6 @@ class HentaiDaTia(
 
             val titleEl = el.selectFirst("h2, h3, .entry-title, span.thumb-titulo")
             val title = titleEl?.text()?.trim() ?: link.attr("title").trim()
-
             val imgEl = el.selectFirst("img")
             val thumb = imgEl?.let { extractImageUrl(it) } ?: ""
 
@@ -219,14 +217,20 @@ class HentaiDaTia(
             listOf(
                 "#galeria-$chapterId img",
                 "div.listaImagens #galeria-$chapterId img",
-                "div.listaImagens img",
+                "ul.post-fotos img",           // principal (estrutura atual)
+                "div.post-box img",            // fallback direto
+                "span.aneSliderImagem img",    // outros padrões
+                "div.foto img",
                 "article img",
                 ".entry-content img"
             )
         } else {
             listOf(
-                "div.listaImagens ul.post-fotos img",
-                "div.listaImagens img",
+                "ul.post-fotos img",           // principal
+                "div.post-box img",            // fallback direto
+                "div.listaImagens ul.post-fotos img", // compatibilidade antiga
+                "span.aneSliderImagem img",
+                "div.foto img",
                 "article img",
                 ".entry-content img"
             )
