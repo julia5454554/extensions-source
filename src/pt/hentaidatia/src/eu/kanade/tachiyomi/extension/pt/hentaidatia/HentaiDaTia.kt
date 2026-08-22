@@ -121,12 +121,49 @@ class HentaiDaTia(
                 addQueryParameter("s", query)
             }
             if (page > 1) {
-                addPathSegment("page")
-                addPathSegment(page.toString())
+                addQueryParameter("paged", page.toString())
             }
         }.build()
         return GET(url, headers)
     }
 
-    override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
+    override fun searchMangaParse(response: Response): MangasPage {
+        val document = response.asJsoup()
+
+        // Seletores comuns em páginas de busca do Gattsu/WordPress
+        val selectors = listOf(
+            "div.thumb-conteudo",
+            "article.post",
+            "div.post",
+            "div.lista > ul > li div.thumb-conteudo",
+            "div.home-box li div.thumb-conteudo"
+        )
+
+        var mangas = emptyList<SManga>()
+        for (selector in selectors) {
+            val elements = document.select(selector)
+            if (elements.isNotEmpty()) {
+                mangas = elements.mapNotNull { el ->
+                    val link = el.selectFirst("a") ?: return@mapNotNull null
+                    val href = link.attr("abs:href")
+                    if (href.isEmpty() ||
+                        href == "$baseUrl/" ||
+                        href.contains("/category/") ||
+                        href.contains("/tag/") ||
+                        href.contains("/page/") ||
+                        href.contains("/galeria/")) {
+                        return@mapNotNull null
+                    }
+                    genericMangaFromElement(el)
+                }.distinctBy { it.url }
+                break
+            }
+        }
+
+        val hasNextPage = document.selectFirst(
+            "ul.paginacao li.next, a.next, .pagination a:contains(›), a.next.page-numbers"
+        ) != null
+
+        return MangasPage(mangas, hasNextPage)
+    }
 }
