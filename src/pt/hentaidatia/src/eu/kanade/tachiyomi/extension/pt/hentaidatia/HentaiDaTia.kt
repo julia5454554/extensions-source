@@ -41,22 +41,12 @@ class HentaiDaTia(
         .add("Referer", "$baseUrl/")
         .add("Cookie", "tia_idade_confirmada=1") // Cookie para desbloquear o site
 
-    // ==================== EXTRAÇÃO DE IMAGEM ====================
+    // ==================== EXTRAÇÃO DE IMAGEM EM ALTA RESOLUÇÃO ====================
     private fun extractImageUrl(element: Element): String {
-        // 1. Tenta atributos comuns de lazy load, ignorando placeholders data:image
-        val direct = element.attr("abs:data-src")
-            .ifEmpty { element.attr("abs:data-lazy-src") }
-            .ifEmpty { element.attr("abs:data-cfsrc") }
-            .ifEmpty { element.attr("abs:data-orig-file") }
-            .ifEmpty { element.attr("abs:src") }
-
-        if (direct.isNotEmpty() && !direct.startsWith("data:image")) {
-            return direct
-        }
-
-        // 2. Se não achou, tenta srcset/data-srcset e pega a maior imagem
+        // 1. Prioriza srcset/data-srcset para obter a maior imagem disponível
         val srcset = element.attr("data-srcset")
             .ifEmpty { element.attr("srcset") }
+
         if (srcset.isNotEmpty()) {
             val candidates = srcset.split(",").mapNotNull { entry ->
                 val parts = entry.trim().split(Regex("\\s+"))
@@ -75,7 +65,18 @@ class HentaiDaTia(
             }
         }
 
-        // 3. Fallback para src original (mesmo que seja data:image, o filtro depois descarta)
+        // 2. Se não houver srcset, tenta atributos de lazy load comuns
+        val direct = element.attr("abs:data-src")
+            .ifEmpty { element.attr("abs:data-lazy-src") }
+            .ifEmpty { element.attr("abs:data-cfsrc") }
+            .ifEmpty { element.attr("abs:data-orig-file") }
+            .ifEmpty { element.attr("abs:src") }
+
+        if (direct.isNotEmpty() && !direct.startsWith("data:image")) {
+            return direct
+        }
+
+        // 3. Fallback final: src original (mesmo que seja data:image, será filtrado depois)
         return element.attr("abs:src")
     }
 
