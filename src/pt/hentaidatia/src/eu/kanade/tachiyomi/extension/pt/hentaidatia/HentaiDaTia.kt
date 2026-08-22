@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.extension.pt.hentaidatia
 
 import eu.kanade.tachiyomi.multisrc.gattsu.Gattsu
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.util.asJsoup
@@ -17,7 +18,7 @@ import kotlin.time.Duration.Companion.seconds
 @Source
 class HentaiDaTia(
     override val lang: String = "pt-BR",
-    override val id: Long = 0L, // troque por um ID único na publicação
+    override val id: Long = 123456789L, // troque por um ID único na publicação
 ) : Gattsu() {
 
     override val name = "HentaiDaTia"
@@ -82,7 +83,7 @@ class HentaiDaTia(
 
     override fun popularMangaParse(response: Response): MangasPage {
         val document = response.asJsoup()
-        // Seletor correto: div.thumb-conteudo (ou div.lista .thumb-conteudo)
+        // Seletor correto: div.thumb-conteudo
         val elements = document.select("div.thumb-conteudo")
 
         val mangas = elements.mapNotNull { el ->
