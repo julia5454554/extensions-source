@@ -9,7 +9,6 @@ keiyoushi {
     versionCode = 1
     contentWarning = ContentWarning.NSFW
     libVersion = "1.4"
-    theme = "gattsu"  // <-- ADICIONE ESTA LINHA
 
     source {
         lang = "pt-BR"
