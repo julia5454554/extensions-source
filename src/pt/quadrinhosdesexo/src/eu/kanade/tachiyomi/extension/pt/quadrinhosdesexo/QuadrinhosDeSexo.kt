@@ -19,13 +19,12 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
-import org.jsoup.nodes.Document
 import kotlin.time.Duration.Companion.seconds
 
 @Source
 class QuadrinhosDeSexo(
     override val lang: String = "pt-BR",
-    override val id: Long = 0L, // troque por um ID único na publicação
+    override val id: Long = 0L, // troque por um ID único
 ) : HttpSource() {
 
     override val name = "QuadrinhosDeSexo"
@@ -39,6 +38,12 @@ class QuadrinhosDeSexo(
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
+
+    // Função auxiliar para obter o número da página atual a partir da URL
+    private fun currentPageFromRequest(request: Request): Int {
+        val url = request.url
+        return url.queryParameter("page")?.toIntOrNull() ?: 1
+    }
 
     // ==================== LISTAGEM (POPULARES) ====================
     override fun popularMangaRequest(page: Int): Request {
@@ -58,7 +63,6 @@ class QuadrinhosDeSexo(
             val title = post.getJSONObject("title").getString("rendered")
             val link = post.getString("link")
             val thumb = post.optString("jetpack_featured_media_url", "").ifEmpty {
-                // Se não tiver imagem destacada, pega a primeira imagem do conteúdo
                 val content = post.getJSONObject("content").getString("rendered")
                 val doc = Jsoup.parse(content)
                 doc.selectFirst("img")?.attr("src") ?: ""
@@ -71,9 +75,9 @@ class QuadrinhosDeSexo(
             }.let { mangas.add(it) }
         }
 
-        // Verifica se há próxima página usando o cabeçalho X-WP-TotalPages
+        val currentPage = currentPageFromRequest(response.request)
         val totalPages = response.header("X-WP-TotalPages")?.toIntOrNull() ?: 1
-        val hasNextPage = page < totalPages
+        val hasNextPage = currentPage < totalPages
 
         return MangasPage(mangas, hasNextPage)
     }
@@ -93,7 +97,7 @@ class QuadrinhosDeSexo(
 
     override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
 
-    // ==================== DETALHES DO MANGÁ ====================
+    // ==================== DETALHES ====================
     override fun mangaDetailsParse(response: Response): SManga {
         val post = JSONObject(response.body.string())
         val title = post.getJSONObject("title").getString("rendered")
@@ -119,7 +123,6 @@ class QuadrinhosDeSexo(
 
     // ==================== CAPÍTULOS ====================
     override fun chapterListParse(response: Response): List<SChapter> {
-        // Cada post é um quadrinho único, então retorna um capítulo
         val basePath = response.request.url.toString().removePrefix(baseUrl)
         return listOf(
             SChapter.create().apply {
@@ -130,13 +133,12 @@ class QuadrinhosDeSexo(
         )
     }
 
-    // ==================== PÁGINAS DO CAPÍTULO ====================
+    // ==================== PÁGINAS ====================
     override fun pageListParse(response: Response): List<Page> {
         val post = JSONObject(response.body.string())
         val contentHtml = post.getJSONObject("content").getString("rendered")
         val doc = Jsoup.parse(contentHtml)
 
-        // Extrai todas as imagens do conteúdo (as páginas do quadrinho)
         val images = doc.select("img")
         val pages = mutableListOf<Page>()
         var index = 0
@@ -148,7 +150,6 @@ class QuadrinhosDeSexo(
                 .ifEmpty { img.attr("data-orig-file") }
                 .ifEmpty { img.attr("src") }
 
-            // Filtra imagens inválidas (placeholders, logos etc.)
             if (src.isNotEmpty() && !src.startsWith("data:image")) {
                 pages.add(Page(index++, url = baseUrl, imageUrl = src))
             }
