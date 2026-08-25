@@ -18,12 +18,10 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.parser.Parser
 import eu.kanade.tachiyomi.network.await
-import java.net.URLEncoder
 
 @Source
 abstract class MeuHentai : KeiSource() {
 
-    // Função para realizar GET com headers anti-hotlink
     private suspend fun fetchWithHeaders(url: String): Response {
         val request = Request.Builder()
             .url(url)
@@ -120,7 +118,6 @@ abstract class MeuHentai : KeiSource() {
 
         val document = fetchWithHeaders(url).asJsoup()
 
-        // Extrai TODAS as imagens de páginas (nome contém "pagina-")
         val images = document.select("img[src*='/wp-content/uploads/']")
         for (img in images) {
             if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
@@ -131,7 +128,6 @@ abstract class MeuHentai : KeiSource() {
             }
         }
 
-        // Fallback para #img_gallery_big caso não tenhamos encontrado nada
         if (pages.isEmpty()) {
             val mainImage = document.selectFirst("#img_gallery_big")
             if (mainImage != null) {
@@ -142,7 +138,6 @@ abstract class MeuHentai : KeiSource() {
             }
         }
 
-        // Procura o link da próxima página (para mangás com paginação)
         val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
             ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
         if (nextLink != null) {
@@ -160,8 +155,7 @@ abstract class MeuHentai : KeiSource() {
             if (value.isNotBlank() && isPageImageUrl(value)) {
                 val fullUrl = if (value.startsWith("/")) "$baseUrl$value" else value
                 if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
-                    // Usa proxy para burlar hotlink
-                    return "https://wsrv.nl/?url=${URLEncoder.encode(fullUrl, "UTF-8")}&output=webp"
+                    return fullUrl // URL direta, sem proxy
                 }
             }
         }
@@ -173,7 +167,7 @@ abstract class MeuHentai : KeiSource() {
                 if (url.isNotBlank() && isPageImageUrl(url)) {
                     val fullUrl = if (url.startsWith("/")) "$baseUrl$url" else url
                     if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
-                        return "https://wsrv.nl/?url=${URLEncoder.encode(fullUrl, "UTF-8")}&output=webp"
+                        return fullUrl
                     }
                 }
             }
