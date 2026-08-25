@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.extension.pt.meuhentai
 
-import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -9,46 +8,21 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.annotation.Source
+import keiyoushi.network.get
 import keiyoushi.source.KeiSource
 import kotlinx.serialization.json.JsonElement
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.Request
-import okhttp3.Response
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 import org.jsoup.parser.Parser
 
 @Source
-class MeuHentai(
-    override val lang: String = "pt",
-    override val id: Long = 6884128036224749348L,
-) : KeiSource() {
-
-    override val name = "Meu Hentai"
-    override val baseUrl = "https://meuhentai.com" // Ajuste para a URL base correta do site
-
-    private val pageImageRegex = Regex(""".*pagina-.*\.(jpg|jpeg|png|webp)$""", RegexOption.IGNORE_CASE)
-
-    override fun imageRequest(page: Page): Request {
-        return Request.Builder()
-            .url(page.imageUrl!!)
-            .header("Referer", "$baseUrl/")
-            .header("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36")
-            .build()
-    }
-
-    private suspend fun fetchWithHeaders(url: String): Response {
-        val request = Request.Builder()
-            .url(url)
-            .header("Referer", "$baseUrl/")
-            .header("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36")
-            .build()
-        return client.newCall(request).await()
-    }
+abstract class MeuHentai : KeiSource() {
 
     override suspend fun getPopularManga(page: Int): MangasPage {
         val url = if (page == 1) "$baseUrl/" else "$baseUrl/page/$page/"
-        val response = fetchWithHeaders(url)
+        val response = client.get(url)
         return parseMangaList(response.asJsoup())
     }
 
@@ -61,14 +35,14 @@ class MeuHentai(
                 addEncodedPathSegments("page/$page/")
             }
         }.build()
-        val response = fetchWithHeaders(url.toString())
+        val response = client.get(url)
         return parseMangaList(response.asJsoup())
     }
 
     override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
         val path = url.encodedPath
         if (path.isBlank() || path == "/") return null
-        val document = fetchWithHeaders("$baseUrl$path").asJsoup()
+        val document = client.get("$baseUrl$path").asJsoup()
         return parseMangaDetails(document).apply {
             setUrlWithoutDomain(path)
         }
@@ -80,7 +54,7 @@ class MeuHentai(
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        val document = fetchWithHeaders(getMangaUrl(manga)).asJsoup()
+        val document = client.get(getMangaUrl(manga)).asJsoup()
         val updatedManga = if (fetchDetails) parseMangaDetails(document) else manga
         val updatedChapters = if (fetchChapters) parseChapterList(document, manga.url) else chapters
         return SMangaUpdate(updatedManga, updatedChapters)
@@ -118,56 +92,74 @@ class MeuHentai(
     )
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val pages = mutableListOf<Page>()
-        val visited = mutableSetOf<String>()
-        var currentUrl: String? = if (chapter.url.startsWith("http")) {
-            chapter.url
-        } else {
+        val chapterUrl = if (chapter.url.startsWith("http")) chapter.url else {
             "$baseUrl${if (chapter.url.startsWith("/")) chapter.url else "/${chapter.url}"}"
         }
+        // Extrai o slug do mangá a partir da URL
+        val mangaSlug = chapterUrl.trimEnd('/').substringAfterLast('/').lowercase()
+        val pages = mutableListOf<Page>()
+        val visited = mutableSetOf<String>()
+        collectPages(chapterUrl, mangaSlug, pages, visited)
+        return pages
+    }
 
-        while (currentUrl != null && currentUrl !in visited) {
-            visited.add(currentUrl)
-            val document = fetchWithHeaders(currentUrl).asJsoup()
+    private suspend fun collectPages(
+        url: String,
+        mangaSlug: String,
+        pages: MutableList<Page>,
+        visited: MutableSet<String>,
+    ) {
+        if (url in visited) return
+        visited.add(url)
 
-            val images = document.select("img[src*='/wp-content/uploads/']")
-            for (img in images) {
-                if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
+        val document = client.get(url).asJsoup()
 
-                val imageUrl = extractPageImageUrl(img)
+        // Seleciona todas as imagens do diretório de uploads
+        val images = document.select("img[src*='/wp-content/uploads/']")
+        for (img in images) {
+            if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
+
+            val imageUrl = extractPageImageUrl(img, mangaSlug)
+            if (imageUrl != null) {
+                pages.add(Page(pages.size, imageUrl = imageUrl))
+            }
+        }
+
+        // Fallback para #img_gallery_big
+        if (pages.isEmpty()) {
+            val mainImage = document.selectFirst("#img_gallery_big")
+            if (mainImage != null) {
+                val imageUrl = extractPageImageUrl(mainImage, mangaSlug)
                 if (imageUrl != null) {
                     pages.add(Page(pages.size, imageUrl = imageUrl))
                 }
             }
-
-            if (pages.isEmpty()) {
-                val mainImage = document.selectFirst("#img_gallery_big")
-                if (mainImage != null) {
-                    val imageUrl = extractPageImageUrl(mainImage)
-                    if (imageUrl != null) {
-                        pages.add(Page(pages.size, imageUrl = imageUrl))
-                    }
-                }
-            }
-
-            val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
-                ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
-
-            val nextUrl = nextLink?.attr("abs:href")?.trim()
-            currentUrl = if (!nextUrl.isNullOrBlank() && nextUrl != currentUrl) nextUrl else null
         }
 
-        return pages
+        // Procura o link da próxima página
+        val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
+            ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
+        if (nextLink != null) {
+            val nextUrl = nextLink.attr("abs:href")
+            if (nextUrl.isNotBlank() && nextUrl != url) {
+                collectPages(nextUrl, mangaSlug, pages, visited)
+            }
+        }
     }
 
-    private fun extractPageImageUrl(img: org.jsoup.nodes.Element): String? {
+    // Extrai somente URLs de imagem que contenham o slug do mangá no nome do arquivo
+    private fun extractPageImageUrl(img: Element, mangaSlug: String): String? {
         val attrs = listOf("data-full-url", "data-original", "data-src", "data-lazy-src", "src")
         for (attr in attrs) {
             val value = img.attr(attr).trim()
-            if (value.isNotBlank() && isPageImageUrl(value)) {
+            if (value.isNotBlank() && isImageUrl(value)) {
                 val fullUrl = if (value.startsWith("/")) "$baseUrl$value" else value
                 if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
-                    return fullUrl
+                    // Verifica se o nome do arquivo contém o slug do mangá (case-insensitive)
+                    val fileName = fullUrl.substringAfterLast('/').lowercase()
+                    if (fileName.contains(mangaSlug.lowercase())) {
+                        return fullUrl
+                    }
                 }
             }
         }
@@ -176,10 +168,13 @@ class MeuHentai(
         if (srcset.isNotBlank()) {
             val srcsetUrls = srcset.split(",").map { it.trim().substringBefore(" ") }
             for (url in srcsetUrls.reversed()) {
-                if (url.isNotBlank() && isPageImageUrl(url)) {
+                if (url.isNotBlank() && isImageUrl(url)) {
                     val fullUrl = if (url.startsWith("/")) "$baseUrl$url" else url
                     if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
-                        return fullUrl
+                        val fileName = fullUrl.substringAfterLast('/').lowercase()
+                        if (fileName.contains(mangaSlug.lowercase())) {
+                            return fullUrl
+                        }
                     }
                 }
             }
@@ -188,9 +183,10 @@ class MeuHentai(
         return null
     }
 
-    private fun isPageImageUrl(url: String): Boolean {
-        val path = url.substringBefore('?').substringBefore('#')
-        return path.matches(pageImageRegex)
+    private fun isImageUrl(url: String): Boolean {
+        return url.substringBefore('?').substringBefore('#').matches(
+            Regex(""".*\.(jpg|jpeg|png|webp)$""", RegexOption.IGNORE_CASE)
+        )
     }
 
     override fun getFilterList(data: JsonElement?): FilterList = FilterList()
