@@ -82,7 +82,6 @@ abstract class MeuHentai : KeiSource() {
         status = SManga.COMPLETED
     }
 
-    // Capítulo único aponta para a URL original do mangá
     private fun parseChapterList(document: Document, mangaUrl: String): List<SChapter> = listOf(
         SChapter.create().apply {
             name = "Capítulo Único"
@@ -107,31 +106,28 @@ abstract class MeuHentai : KeiSource() {
 
         val document = client.get(url).asJsoup()
 
-        // Se a URL não contém /pagina/, estamos na página principal do mangá.
-        // NÃO extraímos imagens daqui; apenas navegamos para a primeira página do leitor.
         if (!url.contains("/pagina/")) {
-            // Tenta encontrar link para a primeira página
             val firstPageLink = document.selectFirst("a[href*='/pagina/1/']")
             if (firstPageLink != null) {
                 collectPages(firstPageLink.attr("abs:href"), pages, visited)
             } else {
-                // Se não encontrar, assume que a primeira página segue o padrão /pagina/1/
                 val base = url.trimEnd('/')
                 collectPages("$base/pagina/1/", pages, visited)
             }
             return
         }
 
-        // Agora estamos em uma página de leitura (/pagina/N/) e extraímos as imagens
+        // Seleciona todas as imagens do diretório de uploads
         val images = document.select("img[src*='/wp-content/uploads/']")
-        images.forEach { img ->
+        for (img in images) {
+            if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
+
             val imageUrl = extractDirectImageUrl(img)
             if (imageUrl != null) {
                 pages.add(Page(pages.size, imageUrl = imageUrl))
             }
         }
 
-        // Fallback para #img_gallery_big
         if (pages.isEmpty()) {
             val mainImage = document.selectFirst("#img_gallery_big")
             if (mainImage != null) {
@@ -142,7 +138,6 @@ abstract class MeuHentai : KeiSource() {
             }
         }
 
-        // Procura o link da próxima página
         val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
             ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
         if (nextLink != null) {
@@ -153,23 +148,27 @@ abstract class MeuHentai : KeiSource() {
         }
     }
 
-    // Extrai apenas URLs diretas de imagem (com extensão de imagem)
     private fun extractDirectImageUrl(img: org.jsoup.nodes.Element): String? {
         val attrs = listOf("data-full-url", "data-original", "data-src", "data-lazy-src", "src")
         for (attr in attrs) {
             val value = img.attr(attr).trim()
             if (value.isNotBlank() && isImageUrl(value)) {
-                return if (value.startsWith("/")) "$baseUrl$value" else value
+                val fullUrl = if (value.startsWith("/")) "$baseUrl$value" else value
+                if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
+                    return fullUrl
+                }
             }
         }
 
-        // Se nenhum atributo válido, tenta srcset
         val srcset = img.attr("srcset")
         if (srcset.isNotBlank()) {
             val srcsetUrls = srcset.split(",").map { it.trim().substringBefore(" ") }
-            for (url in srcsetUrls.reversed()) { // pega a maior (última)
+            for (url in srcsetUrls.reversed()) {
                 if (url.isNotBlank() && isImageUrl(url)) {
-                    return if (url.startsWith("/")) "$baseUrl$url" else url
+                    val fullUrl = if (url.startsWith("/")) "$baseUrl$url" else url
+                    if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
+                        return fullUrl
+                    }
                 }
             }
         }
