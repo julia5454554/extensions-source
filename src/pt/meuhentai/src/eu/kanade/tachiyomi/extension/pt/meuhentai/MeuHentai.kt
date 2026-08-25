@@ -83,7 +83,6 @@ abstract class MeuHentai : KeiSource() {
     }
 
     private fun parseChapterList(document: Document, mangaUrl: String): List<SChapter> {
-        // Tenta encontrar o link para a primeira página do leitor
         val firstPageUrl = document.selectFirst("a[href*='/pagina/1/']")?.attr("href")
         val chapterUrl = firstPageUrl ?: mangaUrl
 
@@ -112,9 +111,6 @@ abstract class MeuHentai : KeiSource() {
 
         val document = client.get(url).asJsoup()
 
-        // Se a URL não contém /pagina/, estamos na página principal do mangá.
-        // Então apenas procura o link para a primeira página ou para a próxima página,
-        // sem extrair imagens (pois a página principal pode ter apenas a capa).
         if (!url.contains("/pagina/")) {
             val firstPageLink = document.selectFirst("a[href*='/pagina/1/']")
             if (firstPageLink != null) {
@@ -129,28 +125,22 @@ abstract class MeuHentai : KeiSource() {
             return
         }
 
-        // Agora estamos em uma página de leitura (ex.: .../pagina/2/)
-        // Extrai a imagem principal da página
         val mainImage = document.selectFirst("#img_gallery_big")
         if (mainImage != null) {
-            val src = mainImage.attr("src").ifBlank { mainImage.attr("data-src") }.ifBlank { mainImage.attr("data-lazy-src") }
-            if (src.isNotBlank()) {
-                val fullUrl = if (src.startsWith("/")) "$baseUrl$src" else src
-                pages.add(Page(pages.size, imageUrl = fullUrl))
+            val imageUrl = extractBestImageUrl(mainImage)
+            if (imageUrl != null) {
+                pages.add(Page(pages.size, imageUrl = imageUrl))
             }
         } else {
-            // Fallback: tenta extrair imagens do conteúdo
             val images = document.select(".post-texto img, .entry-content img, .post-content img, .reader-area img")
             images.forEach { img ->
-                val src = img.attr("src").ifBlank { img.attr("data-src") }.ifBlank { img.attr("data-lazy-src") }
-                if (src.isNotBlank() && !src.contains("thumb")) {
-                    val fullUrl = if (src.startsWith("/")) "$baseUrl$src" else src
-                    pages.add(Page(pages.size, imageUrl = fullUrl))
+                val imageUrl = extractBestImageUrl(img)
+                if (imageUrl != null) {
+                    pages.add(Page(pages.size, imageUrl = imageUrl))
                 }
             }
         }
 
-        // Procura o link da próxima página
         val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
             ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
         if (nextLink != null) {
@@ -158,6 +148,40 @@ abstract class MeuHentai : KeiSource() {
             if (nextUrl.isNotBlank() && nextUrl != url) {
                 collectPages(nextUrl, pages, visited)
             }
+        }
+    }
+
+    private fun extractBestImageUrl(img: org.jsoup.nodes.Element): String? {
+        // Lista de candidatos (sem filtro de thumb)
+        val candidates = mutableListOf<String>()
+
+        // Atributos comuns que podem conter a URL da imagem
+        listOf(
+            img.attr("data-full-url"),
+            img.attr("data-original"),
+            img.attr("data-src"),
+            img.attr("data-lazy-src"),
+            img.attr("src"),
+        ).forEach { if (it.isNotBlank()) candidates.add(it) }
+
+        // Verifica o href do link pai (pode apontar para imagem original)
+        val parentHref = img.parent()?.attr("href")?.takeIf {
+            it.isNotBlank() && it.contains(Regex("\\.(jpg|jpeg|png|webp)$", RegexOption.IGNORE_CASE))
+        }
+        if (parentHref != null) candidates.add(parentHref)
+
+        // Adiciona a maior imagem do srcset
+        val srcset = img.attr("srcset")
+        if (srcset.isNotBlank()) {
+            val srcsetUrls = srcset.split(",").map { it.trim().substringBefore(" ") }
+            srcsetUrls.lastOrNull()?.let { candidates.add(it) }
+        }
+
+        // Escolhe o último candidato (geralmente o de maior resolução)
+        val chosen = candidates.lastOrNull() ?: candidates.firstOrNull()
+
+        return chosen?.let {
+            if (it.startsWith("/")) "$baseUrl$it" else it
         }
     }
 
