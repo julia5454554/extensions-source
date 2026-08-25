@@ -19,23 +19,13 @@ import org.jsoup.parser.Parser
 @Source
 abstract class MeuHentai : KeiSource() {
 
-    // ============================== Popular ==============================
-
     override suspend fun getPopularManga(page: Int): MangasPage {
         val url = if (page == 1) "$baseUrl/" else "$baseUrl/page/$page/"
         val response = client.get(url)
         return parseMangaList(response.asJsoup())
     }
 
-    // ============================== Recentes ==============================
-
-    override suspend fun getLatestUpdates(page: Int): MangasPage {
-        val url = if (page == 1) "$baseUrl/" else "$baseUrl/page/$page/"
-        val response = client.get(url)
-        return parseMangaList(response.asJsoup())
-    }
-
-    // ============================== Busca ==============================
+    override suspend fun getLatestUpdates(page: Int): MangasPage = getPopularManga(page)
 
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
         val url = "$baseUrl/".toHttpUrl().newBuilder().apply {
@@ -44,17 +34,13 @@ abstract class MeuHentai : KeiSource() {
                 addEncodedPathSegments("page/$page/")
             }
         }.build()
-
         val response = client.get(url)
         return parseMangaList(response.asJsoup())
     }
 
-    // ============================== Detalhes ==============================
-
     override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
         val path = url.encodedPath
         if (path.isBlank() || path == "/") return null
-
         val document = client.get("$baseUrl$path").asJsoup()
         return parseMangaDetails(document).apply {
             setUrlWithoutDomain(path)
@@ -96,92 +82,96 @@ abstract class MeuHentai : KeiSource() {
         status = SManga.COMPLETED
     }
 
-    // ============================== Capítulos ==============================
+    private fun parseChapterList(document: Document, mangaUrl: String): List<SChapter> {
+        // Tenta encontrar o link para a primeira página do leitor
+        val firstPageUrl = document.selectFirst("a[href*='/pagina/1/']")?.attr("href")
+        val chapterUrl = firstPageUrl ?: mangaUrl
 
-    private fun parseChapterList(document: Document, mangaUrl: String): List<SChapter> = listOf(
-        SChapter.create().apply {
-            name = "Capítulo Único"
-            setUrlWithoutDomain(mangaUrl)
-            chapter_number = 1f
-        },
-    )
-
-    // ============================== Páginas ==============================
+        return listOf(
+            SChapter.create().apply {
+                name = "Capítulo Único"
+                setUrlWithoutDomain(chapterUrl)
+                chapter_number = 1f
+            },
+        )
+    }
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
         val chapterUrl = if (chapter.url.startsWith("http")) chapter.url else {
             "$baseUrl${if (chapter.url.startsWith("/")) chapter.url else "/${chapter.url}"}"
         }
-        val document = client.get(chapterUrl).asJsoup()
-
-        // 1) Tenta extrair todas as imagens do JSON-LD (mais eficiente)
-        val jsonLdImages = extractImagesFromJsonLd(document)
-        if (jsonLdImages.isNotEmpty()) {
-            return jsonLdImages.mapIndexed { index, url ->
-                Page(index, imageUrl = url)
-            }
-        }
-
-        // 2) Fallback: navegação pelas páginas do capítulo
         val pages = mutableListOf<Page>()
-        val visitedUrls = mutableSetOf<String>()
-        collectPages(chapterUrl, pages, visitedUrls)
+        val visited = mutableSetOf<String>()
+        collectPages(chapterUrl, pages, visited)
         return pages
     }
 
-    private fun extractImagesFromJsonLd(document: Document): List<String> {
-        val script = document.selectFirst("script[type='application/ld+json']") ?: return emptyList()
-        val json = script.data()
-
-        // Captura qualquer URL de imagem (jpg, jpeg, png, webp) no JSON
-        return Regex("""https?://[^"\\]+\.(?:jpg|jpeg|png|webp)""", RegexOption.IGNORE_CASE)
-            .findAll(json)
-            .map { it.value }
-            .distinct()
-            .toList()
-    }
-
-    private suspend fun collectPages(url: String, pages: MutableList<Page>, visitedUrls: MutableSet<String>) {
-        if (url in visitedUrls) return
-        visitedUrls.add(url)
+    private suspend fun collectPages(url: String, pages: MutableList<Page>, visited: MutableSet<String>) {
+        if (url in visited) return
+        visited.add(url)
 
         val document = client.get(url).asJsoup()
-        val images = document.select("#img_gallery_big, .entry-content img, .post-content img, .reader-area img, .gallery_pagination img")
-        images.forEach { img ->
-            val src = img.attr("data-src").ifBlank { img.attr("data-lazy-src") }.ifBlank { img.attr("src") }
+
+        // Se a URL não contém /pagina/, estamos na página principal do mangá.
+        // Então apenas procura o link para a primeira página ou para a próxima página,
+        // sem extrair imagens (pois a página principal pode ter apenas a capa).
+        if (!url.contains("/pagina/")) {
+            val firstPageLink = document.selectFirst("a[href*='/pagina/1/']")
+            if (firstPageLink != null) {
+                collectPages(firstPageLink.attr("abs:href"), pages, visited)
+            } else {
+                val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
+                    ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
+                if (nextLink != null) {
+                    collectPages(nextLink.attr("abs:href"), pages, visited)
+                }
+            }
+            return
+        }
+
+        // Agora estamos em uma página de leitura (ex.: .../pagina/2/)
+        // Extrai a imagem principal da página
+        val mainImage = document.selectFirst("#img_gallery_big")
+        if (mainImage != null) {
+            val src = mainImage.attr("src").ifBlank { mainImage.attr("data-src") }.ifBlank { mainImage.attr("data-lazy-src") }
             if (src.isNotBlank()) {
                 val fullUrl = if (src.startsWith("/")) "$baseUrl$src" else src
                 pages.add(Page(pages.size, imageUrl = fullUrl))
             }
+        } else {
+            // Fallback: tenta extrair imagens do conteúdo
+            val images = document.select(".post-texto img, .entry-content img, .post-content img, .reader-area img")
+            images.forEach { img ->
+                val src = img.attr("src").ifBlank { img.attr("data-src") }.ifBlank { img.attr("data-lazy-src") }
+                if (src.isNotBlank() && !src.contains("thumb")) {
+                    val fullUrl = if (src.startsWith("/")) "$baseUrl$src" else src
+                    pages.add(Page(pages.size, imageUrl = fullUrl))
+                }
+            }
         }
 
+        // Procura o link da próxima página
         val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
             ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
         if (nextLink != null) {
             val nextUrl = nextLink.attr("abs:href")
-            if (nextUrl.isNotBlank()) {
-                collectPages(nextUrl, pages, visitedUrls)
+            if (nextUrl.isNotBlank() && nextUrl != url) {
+                collectPages(nextUrl, pages, visited)
             }
         }
     }
 
-    // ============================== Filtros ==============================
-
     override fun getFilterList(data: JsonElement?): FilterList = FilterList()
-
-    // ============================== Listagem ==============================
 
     private fun parseMangaList(document: Document): MangasPage {
         val mangas = mutableListOf<SManga>()
         val seenUrls = mutableSetOf<String>()
-
         val elements = document.select(".lista-foto")
         for (element in elements) {
             val link = element.selectFirst("a.intentf") ?: element.selectFirst("a[href]") ?: continue
             val href = link.attr("href").trim()
             if (href.isBlank()) continue
 
-            // Remove o domínio se a URL for absoluta, guardando apenas o caminho (path)
             val mangaPath = href.substringAfter(baseUrl).ifBlank { href }
             if (seenUrls.contains(mangaPath)) continue
             seenUrls.add(mangaPath)
@@ -202,10 +192,8 @@ abstract class MeuHentai : KeiSource() {
                 },
             )
         }
-
         val hasNextPage = document.selectFirst("link[rel='next']") != null ||
             document.selectFirst(".next, .pagination .next, a[rel='next']") != null
-
         return MangasPage(mangas, hasNextPage)
     }
 }
