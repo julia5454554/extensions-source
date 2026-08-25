@@ -106,38 +106,29 @@ abstract class MeuHentai : KeiSource() {
 
         val document = client.get(url).asJsoup()
 
-        if (!url.contains("/pagina/")) {
-            val firstPageLink = document.selectFirst("a[href*='/pagina/1/']")
-            if (firstPageLink != null) {
-                collectPages(firstPageLink.attr("abs:href"), pages, visited)
-            } else {
-                val base = url.trimEnd('/')
-                collectPages("$base/pagina/1/", pages, visited)
-            }
-            return
-        }
-
-        // Seleciona todas as imagens do diretório de uploads
+        // Seleciona todas as imagens do diretório de uploads que contenham "pagina-" no nome do arquivo
         val images = document.select("img[src*='/wp-content/uploads/']")
         for (img in images) {
             if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
 
-            val imageUrl = extractDirectImageUrl(img)
+            val imageUrl = extractPageImageUrl(img)
             if (imageUrl != null) {
                 pages.add(Page(pages.size, imageUrl = imageUrl))
             }
         }
 
+        // Fallback para #img_gallery_big (caso não tenhamos capturado nada)
         if (pages.isEmpty()) {
             val mainImage = document.selectFirst("#img_gallery_big")
             if (mainImage != null) {
-                val imageUrl = extractDirectImageUrl(mainImage)
+                val imageUrl = extractPageImageUrl(mainImage)
                 if (imageUrl != null) {
                     pages.add(Page(pages.size, imageUrl = imageUrl))
                 }
             }
         }
 
+        // Procura o link da próxima página
         val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
             ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
         if (nextLink != null) {
@@ -148,11 +139,12 @@ abstract class MeuHentai : KeiSource() {
         }
     }
 
-    private fun extractDirectImageUrl(img: org.jsoup.nodes.Element): String? {
+    // Extrai somente URLs de imagem que contenham "pagina-" no nome do arquivo
+    private fun extractPageImageUrl(img: org.jsoup.nodes.Element): String? {
         val attrs = listOf("data-full-url", "data-original", "data-src", "data-lazy-src", "src")
         for (attr in attrs) {
             val value = img.attr(attr).trim()
-            if (value.isNotBlank() && isImageUrl(value)) {
+            if (value.isNotBlank() && isPageImageUrl(value)) {
                 val fullUrl = if (value.startsWith("/")) "$baseUrl$value" else value
                 if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
                     return fullUrl
@@ -160,11 +152,12 @@ abstract class MeuHentai : KeiSource() {
             }
         }
 
+        // Verifica srcset
         val srcset = img.attr("srcset")
         if (srcset.isNotBlank()) {
             val srcsetUrls = srcset.split(",").map { it.trim().substringBefore(" ") }
             for (url in srcsetUrls.reversed()) {
-                if (url.isNotBlank() && isImageUrl(url)) {
+                if (url.isNotBlank() && isPageImageUrl(url)) {
                     val fullUrl = if (url.startsWith("/")) "$baseUrl$url" else url
                     if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
                         return fullUrl
@@ -176,10 +169,10 @@ abstract class MeuHentai : KeiSource() {
         return null
     }
 
-    private fun isImageUrl(url: String): Boolean {
-        return url.substringBefore('?').substringBefore('#').matches(
-            Regex(""".*\.(jpg|jpeg|png|webp)$""", RegexOption.IGNORE_CASE)
-        )
+    // Verifica se a URL é de uma imagem e contém "pagina-" no nome do arquivo
+    private fun isPageImageUrl(url: String): Boolean {
+        val path = url.substringBefore('?').substringBefore('#')
+        return path.matches(Regex(""".*pagina-.*\.(jpg|jpeg|png|webp)$""", RegexOption.IGNORE_CASE))
     }
 
     override fun getFilterList(data: JsonElement?): FilterList = FilterList()
