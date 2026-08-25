@@ -82,30 +82,19 @@ abstract class MeuHentai : KeiSource() {
         status = SManga.COMPLETED
     }
 
-    // Corrigido: garante que o capítulo aponte para a primeira página
-    private fun parseChapterList(document: Document, mangaUrl: String): List<SChapter> {
-        val baseUrl = mangaUrl.trimEnd('/')
-        val chapterUrl = if (baseUrl.endsWith("/pagina/1")) baseUrl else "$baseUrl/pagina/1/"
-
-        return listOf(
-            SChapter.create().apply {
-                name = "Capítulo Único"
-                setUrlWithoutDomain(chapterUrl)
-                chapter_number = 1f
-            },
-        )
-    }
+    // Capítulo único aponta para a URL original do mangá
+    private fun parseChapterList(document: Document, mangaUrl: String): List<SChapter> = listOf(
+        SChapter.create().apply {
+            name = "Capítulo Único"
+            setUrlWithoutDomain(mangaUrl)
+            chapter_number = 1f
+        },
+    )
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        var chapterUrl = if (chapter.url.startsWith("http")) chapter.url else {
+        val chapterUrl = if (chapter.url.startsWith("http")) chapter.url else {
             "$baseUrl${if (chapter.url.startsWith("/")) chapter.url else "/${chapter.url}"}"
         }
-
-        // Garante que a URL aponte para a primeira página
-        if (!chapterUrl.contains("/pagina/")) {
-            chapterUrl = chapterUrl.trimEnd('/') + "/pagina/1/"
-        }
-
         val pages = mutableListOf<Page>()
         val visited = mutableSetOf<String>()
         collectPages(chapterUrl, pages, visited)
@@ -118,7 +107,22 @@ abstract class MeuHentai : KeiSource() {
 
         val document = client.get(url).asJsoup()
 
-        // Seleciona todas as imagens que estão em /wp-content/uploads/ (evita logos etc.)
+        // Se a URL não contém /pagina/, estamos na página principal do mangá.
+        // NÃO extraímos imagens daqui; apenas navegamos para a primeira página do leitor.
+        if (!url.contains("/pagina/")) {
+            // Tenta encontrar link para a primeira página
+            val firstPageLink = document.selectFirst("a[href*='/pagina/1/']")
+            if (firstPageLink != null) {
+                collectPages(firstPageLink.attr("abs:href"), pages, visited)
+            } else {
+                // Se não encontrar, assume que a primeira página segue o padrão /pagina/1/
+                val base = url.trimEnd('/')
+                collectPages("$base/pagina/1/", pages, visited)
+            }
+            return
+        }
+
+        // Agora estamos em uma página de leitura (/pagina/N/) e extraímos as imagens
         val images = document.select("img[src*='/wp-content/uploads/']")
         images.forEach { img ->
             val imageUrl = extractDirectImageUrl(img)
@@ -127,7 +131,7 @@ abstract class MeuHentai : KeiSource() {
             }
         }
 
-        // Se nenhuma imagem foi encontrada, tenta o fallback para #img_gallery_big
+        // Fallback para #img_gallery_big
         if (pages.isEmpty()) {
             val mainImage = document.selectFirst("#img_gallery_big")
             if (mainImage != null) {
