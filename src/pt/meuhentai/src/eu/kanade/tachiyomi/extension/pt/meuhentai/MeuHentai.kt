@@ -120,15 +120,18 @@ abstract class MeuHentai : KeiSource() {
             val href = link.attr("href").trim()
             if (href.isBlank() || seenUrls.contains(href)) continue
             seenUrls.add(href)
-            val title = link.attr("title").trim()
+
+            val mangaTitle = link.attr("title").trim()
                 .ifBlank { element.selectFirst("h2.white")?.text()?.trim().orEmpty() }
                 .ifBlank { link.text().trim() }
-            if (title.isBlank()) continue
+            if (mangaTitle.isBlank()) continue
+
             val img = element.selectFirst("img.thumb")?.attr("src")?.trim()
                 ?.let { if (it.startsWith("/")) "$baseUrl$it" else it }
+
             mangas.add(
                 SManga.create().apply {
-                    title = Parser.unescapeEntities(title, false)
+                    title = Parser.unescapeEntities(mangaTitle, false)
                     setUrlWithoutDomain(href)
                     thumbnail_url = img
                 },
