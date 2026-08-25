@@ -125,16 +125,17 @@ abstract class MeuHentai : KeiSource() {
             return
         }
 
+        // Estamos em uma página de leitura (/pagina/N/)
         val mainImage = document.selectFirst("#img_gallery_big")
         if (mainImage != null) {
-            val imageUrl = extractBestImageUrl(mainImage)
+            val imageUrl = extractDirectImageUrl(mainImage)
             if (imageUrl != null) {
                 pages.add(Page(pages.size, imageUrl = imageUrl))
             }
         } else {
             val images = document.select(".post-texto img, .entry-content img, .post-content img, .reader-area img")
             images.forEach { img ->
-                val imageUrl = extractBestImageUrl(img)
+                val imageUrl = extractDirectImageUrl(img)
                 if (imageUrl != null) {
                     pages.add(Page(pages.size, imageUrl = imageUrl))
                 }
@@ -151,38 +152,34 @@ abstract class MeuHentai : KeiSource() {
         }
     }
 
-    private fun extractBestImageUrl(img: org.jsoup.nodes.Element): String? {
-        // Lista de candidatos (sem filtro de thumb)
-        val candidates = mutableListOf<String>()
-
-        // Atributos comuns que podem conter a URL da imagem
-        listOf(
-            img.attr("data-full-url"),
-            img.attr("data-original"),
-            img.attr("data-src"),
-            img.attr("data-lazy-src"),
-            img.attr("src"),
-        ).forEach { if (it.isNotBlank()) candidates.add(it) }
-
-        // Verifica o href do link pai (pode apontar para imagem original)
-        val parentHref = img.parent()?.attr("href")?.takeIf {
-            it.isNotBlank() && it.contains(Regex("\\.(jpg|jpeg|png|webp)$", RegexOption.IGNORE_CASE))
+    // Extrai apenas URLs diretas de imagem (com extensão de imagem)
+    private fun extractDirectImageUrl(img: org.jsoup.nodes.Element): String? {
+        val attrs = listOf("data-full-url", "data-original", "data-src", "data-lazy-src", "src")
+        for (attr in attrs) {
+            val value = img.attr(attr).trim()
+            if (value.isNotBlank() && isImageUrl(value)) {
+                return if (value.startsWith("/")) "$baseUrl$value" else value
+            }
         }
-        if (parentHref != null) candidates.add(parentHref)
 
-        // Adiciona a maior imagem do srcset
+        // Se nenhum atributo válido, tenta srcset
         val srcset = img.attr("srcset")
         if (srcset.isNotBlank()) {
             val srcsetUrls = srcset.split(",").map { it.trim().substringBefore(" ") }
-            srcsetUrls.lastOrNull()?.let { candidates.add(it) }
+            for (url in srcsetUrls.reversed()) { // pega a maior (última)
+                if (url.isNotBlank() && isImageUrl(url)) {
+                    return if (url.startsWith("/")) "$baseUrl$url" else url
+                }
+            }
         }
 
-        // Escolhe o último candidato (geralmente o de maior resolução)
-        val chosen = candidates.lastOrNull() ?: candidates.firstOrNull()
+        return null
+    }
 
-        return chosen?.let {
-            if (it.startsWith("/")) "$baseUrl$it" else it
-        }
+    private fun isImageUrl(url: String): Boolean {
+        return url.substringBefore('?').substringBefore('#').matches(
+            Regex(""".*\.(jpg|jpeg|png|webp)$""", RegexOption.IGNORE_CASE)
+        )
     }
 
     override fun getFilterList(data: JsonElement?): FilterList = FilterList()
