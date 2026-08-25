@@ -64,7 +64,7 @@ abstract class MeuHentai : KeiSource() {
     private fun parseMangaDetails(document: Document): SManga = SManga.create().apply {
         val ogTitle = document.selectFirst("meta[property=og:title]")?.attr("content")
         val rawTitle = document.selectFirst("h1.entry-title, h1.post-title, h1")?.text() ?: ogTitle ?: ""
-        title = Parser.unescapeEntities(cleanTitle(rawTitle), false)
+        title = Parser.unescapeEntities(rawTitle, false)
 
         thumbnail_url = document.selectFirst("meta[property=og:image]")?.attr("content")?.let {
             if (it.startsWith("/")) "$baseUrl$it" else it
@@ -84,10 +84,6 @@ abstract class MeuHentai : KeiSource() {
         status = SManga.COMPLETED
     }
 
-    private fun cleanTitle(rawTitle: String): String = rawTitle
-        .replace(Regex("""\s*[-–—]\s*(Completo|Hentai|HQ Porno|Quadrinhos Eróticos|HQ|Porno)(\s*[-–—]\s*(Hentai|HQ Porno|Quadrinhos Eróticos|HQ|Porno))*\s*$""", RegexOption.IGNORE_CASE), "")
-        .trim()
-
     private fun parseChapterList(document: Document, mangaUrl: String): List<SChapter> = listOf(
         SChapter.create().apply {
             name = "Capítulo Único"
@@ -98,34 +94,19 @@ abstract class MeuHentai : KeiSource() {
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
         val chapterUrl = "$baseUrl${if (chapter.url.startsWith("/")) chapter.url else "/${chapter.url}"}"
-        val pages = mutableListOf<Page>()
-        val visitedUrls = mutableSetOf<String>()
-        collectPages(chapterUrl, pages, visitedUrls)
-        return pages
-    }
-
-    private suspend fun collectPages(url: String, pages: MutableList<Page>, visitedUrls: MutableSet<String>) {
-        if (url in visitedUrls) return
-        visitedUrls.add(url)
-
-        val document = client.get(url).asJsoup()
+        val document = client.get(chapterUrl).asJsoup()
         val images = document.select(".entry-content img, .post-content img, .reader-area img")
-        images.forEach { img ->
+        val pages = mutableListOf<Page>()
+        var index = 0
+        for (img in images) {
             val src = img.attr("data-src").ifBlank { img.attr("data-lazy-src") }.ifBlank { img.attr("src") }
             if (src.isNotBlank()) {
                 val fullUrl = if (src.startsWith("/")) "$baseUrl$src" else src
-                pages.add(Page(pages.size, imageUrl = fullUrl))
+                pages.add(Page(index, imageUrl = fullUrl))
+                index++
             }
         }
-
-        val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
-            ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
-        if (nextLink != null) {
-            val nextUrl = nextLink.attr("abs:href")
-            if (nextUrl.isNotBlank()) {
-                collectPages(nextUrl, pages, visitedUrls)
-            }
-        }
+        return pages
     }
 
     override fun getFilterList(data: JsonElement?): FilterList = FilterList()
@@ -133,22 +114,18 @@ abstract class MeuHentai : KeiSource() {
     private fun parseMangaList(document: Document): MangasPage {
         val mangas = mutableListOf<SManga>()
         val seenUrls = mutableSetOf<String>()
-
         val elements = document.select(".lista-foto")
         for (element in elements) {
             val link = element.selectFirst("a.intentf") ?: element.selectFirst("a[href]") ?: continue
             val href = link.attr("href").trim()
             if (href.isBlank() || seenUrls.contains(href)) continue
             seenUrls.add(href)
-
             val title = link.attr("title").trim()
                 .ifBlank { element.selectFirst("h2.white")?.text()?.trim().orEmpty() }
                 .ifBlank { link.text().trim() }
             if (title.isBlank()) continue
-
             val img = element.selectFirst("img.thumb")?.attr("src")?.trim()
                 ?.let { if (it.startsWith("/")) "$baseUrl$it" else it }
-
             mangas.add(
                 SManga.create().apply {
                     title = Parser.unescapeEntities(title, false)
@@ -157,10 +134,8 @@ abstract class MeuHentai : KeiSource() {
                 },
             )
         }
-
         val hasNextPage = document.selectFirst("link[rel='next']") != null ||
             document.selectFirst(".next, .pagination .next, a[rel='next']") != null
-
         return MangasPage(mangas, hasNextPage)
     }
 }
