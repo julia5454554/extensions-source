@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.extension.pt.meuhentai
 
+import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -8,31 +9,33 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.annotation.Source
-import keiyoushi.network.get
 import keiyoushi.source.KeiSource
 import kotlinx.serialization.json.JsonElement
-import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.parser.Parser
-import eu.kanade.tachiyomi.network.await
 
 @Source
-abstract class MeuHentai : KeiSource() {
+class MeuHentai : KeiSource() {
 
-    // Adiciona Referer e User-Agent em todas as requisições da extensão,
-    // incluindo o carregamento de imagens (resolve hotlink)
-    override fun headersBuilder(): Headers.Builder = super.headersBuilder()
-        .set("Referer", "$baseUrl/")
-        .set("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36")
+    private val pageImageRegex = Regex(""".*pagina-.*\.(jpg|jpeg|png|webp)$""", RegexOption.IGNORE_CASE)
+
+    override fun imageRequest(page: Page): Request {
+        return Request.Builder()
+            .url(page.imageUrl!!)
+            .header("Referer", "$baseUrl/")
+            .header("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36")
+            .build()
+    }
 
     private suspend fun fetchWithHeaders(url: String): Response {
         val request = Request.Builder()
             .url(url)
-            .headers(headersBuilder().build())
+            .header("Referer", "$baseUrl/")
+            .header("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36")
             .build()
         return client.newCall(request).await()
     }
@@ -109,49 +112,46 @@ abstract class MeuHentai : KeiSource() {
     )
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val chapterUrl = if (chapter.url.startsWith("http")) chapter.url else {
-            "$baseUrl${if (chapter.url.startsWith("/")) chapter.url else "/${chapter.url}"}"
-        }
         val pages = mutableListOf<Page>()
         val visited = mutableSetOf<String>()
-        collectPages(chapterUrl, pages, visited)
-        return pages
-    }
-
-    private suspend fun collectPages(url: String, pages: MutableList<Page>, visited: MutableSet<String>) {
-        if (url in visited) return
-        visited.add(url)
-
-        val document = fetchWithHeaders(url).asJsoup()
-
-        val images = document.select("img[src*='/wp-content/uploads/']")
-        for (img in images) {
-            if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
-
-            val imageUrl = extractPageImageUrl(img)
-            if (imageUrl != null) {
-                pages.add(Page(pages.size, imageUrl = imageUrl))
-            }
+        var currentUrl: String? = if (chapter.url.startsWith("http")) {
+            chapter.url
+        } else {
+            "$baseUrl${if (chapter.url.startsWith("/")) chapter.url else "/${chapter.url}"}"
         }
 
-        if (pages.isEmpty()) {
-            val mainImage = document.selectFirst("#img_gallery_big")
-            if (mainImage != null) {
-                val imageUrl = extractPageImageUrl(mainImage)
+        while (currentUrl != null && currentUrl !in visited) {
+            visited.add(currentUrl)
+            val document = fetchWithHeaders(currentUrl).asJsoup()
+
+            val images = document.select("img[src*='/wp-content/uploads/']")
+            for (img in images) {
+                if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
+
+                val imageUrl = extractPageImageUrl(img)
                 if (imageUrl != null) {
                     pages.add(Page(pages.size, imageUrl = imageUrl))
                 }
             }
+
+            if (pages.isEmpty()) {
+                val mainImage = document.selectFirst("#img_gallery_big")
+                if (mainImage != null) {
+                    val imageUrl = extractPageImageUrl(mainImage)
+                    if (imageUrl != null) {
+                        pages.add(Page(pages.size, imageUrl = imageUrl))
+                    }
+                }
+            }
+
+            val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
+                ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
+            
+            val nextUrl = nextLink?.attr("abs:href")?.trim()
+            currentUrl = if (!nextUrl.isNullOrBlank() && nextUrl != currentUrl) nextUrl else null
         }
 
-        val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
-            ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
-        if (nextLink != null) {
-            val nextUrl = nextLink.attr("abs:href")
-            if (nextUrl.isNotBlank() && nextUrl != url) {
-                collectPages(nextUrl, pages, visited)
-            }
-        }
+        return pages
     }
 
     private fun extractPageImageUrl(img: org.jsoup.nodes.Element): String? {
@@ -184,7 +184,7 @@ abstract class MeuHentai : KeiSource() {
 
     private fun isPageImageUrl(url: String): Boolean {
         val path = url.substringBefore('?').substringBefore('#')
-        return path.matches(Regex(""".*pagina-.*\.(jpg|jpeg|png|webp)$""", RegexOption.IGNORE_CASE))
+        return path.matches(pageImageRegex)
     }
 
     override fun getFilterList(data: JsonElement?): FilterList = FilterList()
