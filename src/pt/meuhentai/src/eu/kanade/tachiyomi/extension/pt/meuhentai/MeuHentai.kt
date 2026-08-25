@@ -19,11 +19,12 @@ import org.jsoup.parser.Parser
 @Source
 abstract class MeuHentai : KeiSource() {
 
-    // ============================== Popular (desativada) ==============================
+    // ============================== Popular ==============================
 
     override suspend fun getPopularManga(page: Int): MangasPage {
-        // Retorna lista vazia para desativar a aba Popular
-        return MangasPage(emptyList(), false)
+        val url = if (page == 1) "$baseUrl/" else "$baseUrl/page/$page/"
+        val response = client.get(url)
+        return parseMangaList(response.asJsoup())
     }
 
     // ============================== Recentes ==============================
@@ -132,12 +133,12 @@ abstract class MeuHentai : KeiSource() {
         val script = document.selectFirst("script[type='application/ld+json']") ?: return emptyList()
         val json = script.data()
 
-        // Tenta capturar contentUrl, depois url
-        val contentUrls = Regex(""""contentUrl"\s*:\s*"([^"]+)"""").findAll(json).map { it.groupValues[1] }.toList()
-        if (contentUrls.isNotEmpty()) return contentUrls
-
-        val urls = Regex(""""url"\s*:\s*"([^"]+)"""").findAll(json).map { it.groupValues[1] }.toList()
-        return urls
+        // Captura qualquer URL de imagem (jpg, jpeg, png, webp) no JSON
+        return Regex("""https?://[^"\\]+\.(?:jpg|jpeg|png|webp)""", RegexOption.IGNORE_CASE)
+            .findAll(json)
+            .map { it.value }
+            .distinct()
+            .toList()
     }
 
     private suspend fun collectPages(url: String, pages: MutableList<Page>, visitedUrls: MutableSet<String>) {
