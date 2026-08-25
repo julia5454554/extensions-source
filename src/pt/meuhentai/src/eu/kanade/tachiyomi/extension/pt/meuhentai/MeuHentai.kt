@@ -19,7 +19,13 @@ import org.jsoup.nodes.Document
 import org.jsoup.parser.Parser
 
 @Source
-class MeuHentai : KeiSource() {
+class MeuHentai(
+    override val lang: String = "pt",
+    override val id: Long = 6884128036224749348L,
+) : KeiSource() {
+
+    override val name = "Meu Hentai"
+    override val baseUrl = "https://meuhentai.com" // Ajuste para a URL base correta do site
 
     private val pageImageRegex = Regex(""".*pagina-.*\.(jpg|jpeg|png|webp)$""", RegexOption.IGNORE_CASE)
 
@@ -146,7 +152,7 @@ class MeuHentai : KeiSource() {
 
             val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
                 ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
-            
+
             val nextUrl = nextLink?.attr("abs:href")?.trim()
             currentUrl = if (!nextUrl.isNullOrBlank() && nextUrl != currentUrl) nextUrl else null
         }
