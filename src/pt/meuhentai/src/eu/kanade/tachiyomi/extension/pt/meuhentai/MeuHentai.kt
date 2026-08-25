@@ -13,27 +13,28 @@ import keiyoushi.source.KeiSource
 import kotlinx.serialization.json.JsonElement
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.parser.Parser
+import eu.kanade.tachiyomi.network.await
 
 @Source
 abstract class MeuHentai : KeiSource() {
 
-    // Configura o cliente com headers para evitar bloqueio de hotlink
-    override val client: OkHttpClient = super.client.newBuilder()
-        .addInterceptor { chain ->
-            val request = chain.request().newBuilder()
-                .header("Referer", baseUrl)
-                .header("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36")
-                .build()
-            chain.proceed(request)
-        }
-        .build()
+    // Função para realizar GET com headers anti-hotlink
+    private suspend fun fetchWithHeaders(url: String): Response {
+        val request = Request.Builder()
+            .url(url)
+            .header("Referer", baseUrl)
+            .header("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36")
+            .build()
+        return client.newCall(request).await()
+    }
 
     override suspend fun getPopularManga(page: Int): MangasPage {
         val url = if (page == 1) "$baseUrl/" else "$baseUrl/page/$page/"
-        val response = client.get(url)
+        val response = fetchWithHeaders(url)
         return parseMangaList(response.asJsoup())
     }
 
@@ -46,14 +47,14 @@ abstract class MeuHentai : KeiSource() {
                 addEncodedPathSegments("page/$page/")
             }
         }.build()
-        val response = client.get(url)
+        val response = fetchWithHeaders(url.toString())
         return parseMangaList(response.asJsoup())
     }
 
     override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
         val path = url.encodedPath
         if (path.isBlank() || path == "/") return null
-        val document = client.get("$baseUrl$path").asJsoup()
+        val document = fetchWithHeaders("$baseUrl$path").asJsoup()
         return parseMangaDetails(document).apply {
             setUrlWithoutDomain(path)
         }
@@ -65,7 +66,7 @@ abstract class MeuHentai : KeiSource() {
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        val document = client.get(getMangaUrl(manga)).asJsoup()
+        val document = fetchWithHeaders(getMangaUrl(manga)).asJsoup()
         val updatedManga = if (fetchDetails) parseMangaDetails(document) else manga
         val updatedChapters = if (fetchChapters) parseChapterList(document, manga.url) else chapters
         return SMangaUpdate(updatedManga, updatedChapters)
@@ -116,7 +117,7 @@ abstract class MeuHentai : KeiSource() {
         if (url in visited) return
         visited.add(url)
 
-        val document = client.get(url).asJsoup()
+        val document = fetchWithHeaders(url).asJsoup()
 
         // Captura apenas imagens de páginas (nome contém "pagina-")
         val images = document.select("img[src*='/wp-content/uploads/']")
