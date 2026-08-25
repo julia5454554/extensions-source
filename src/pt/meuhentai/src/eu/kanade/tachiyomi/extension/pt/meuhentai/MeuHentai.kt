@@ -13,11 +13,23 @@ import keiyoushi.source.KeiSource
 import kotlinx.serialization.json.JsonElement
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
 import org.jsoup.nodes.Document
 import org.jsoup.parser.Parser
 
 @Source
 abstract class MeuHentai : KeiSource() {
+
+    // Configura o cliente com headers para evitar bloqueio de hotlink
+    override val client: OkHttpClient = super.client.newBuilder()
+        .addInterceptor { chain ->
+            val request = chain.request().newBuilder()
+                .header("Referer", baseUrl)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36")
+                .build()
+            chain.proceed(request)
+        }
+        .build()
 
     override suspend fun getPopularManga(page: Int): MangasPage {
         val url = if (page == 1) "$baseUrl/" else "$baseUrl/page/$page/"
@@ -106,7 +118,7 @@ abstract class MeuHentai : KeiSource() {
 
         val document = client.get(url).asJsoup()
 
-        // Seleciona todas as imagens do diretório de uploads que contenham "pagina-" no nome do arquivo
+        // Captura apenas imagens de páginas (nome contém "pagina-")
         val images = document.select("img[src*='/wp-content/uploads/']")
         for (img in images) {
             if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
@@ -117,7 +129,6 @@ abstract class MeuHentai : KeiSource() {
             }
         }
 
-        // Fallback para #img_gallery_big (caso não tenhamos capturado nada)
         if (pages.isEmpty()) {
             val mainImage = document.selectFirst("#img_gallery_big")
             if (mainImage != null) {
@@ -128,7 +139,6 @@ abstract class MeuHentai : KeiSource() {
             }
         }
 
-        // Procura o link da próxima página
         val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
             ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
         if (nextLink != null) {
@@ -139,7 +149,6 @@ abstract class MeuHentai : KeiSource() {
         }
     }
 
-    // Extrai somente URLs de imagem que contenham "pagina-" no nome do arquivo
     private fun extractPageImageUrl(img: org.jsoup.nodes.Element): String? {
         val attrs = listOf("data-full-url", "data-original", "data-src", "data-lazy-src", "src")
         for (attr in attrs) {
@@ -152,7 +161,6 @@ abstract class MeuHentai : KeiSource() {
             }
         }
 
-        // Verifica srcset
         val srcset = img.attr("srcset")
         if (srcset.isNotBlank()) {
             val srcsetUrls = srcset.split(",").map { it.trim().substringBefore(" ") }
@@ -169,7 +177,6 @@ abstract class MeuHentai : KeiSource() {
         return null
     }
 
-    // Verifica se a URL é de uma imagem e contém "pagina-" no nome do arquivo
     private fun isPageImageUrl(url: String): Boolean {
         val path = url.substringBefore('?').substringBefore('#')
         return path.matches(Regex(""".*pagina-.*\.(jpg|jpeg|png|webp)$""", RegexOption.IGNORE_CASE))
