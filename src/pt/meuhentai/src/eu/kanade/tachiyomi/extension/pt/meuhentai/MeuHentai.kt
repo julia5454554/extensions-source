@@ -11,6 +11,7 @@ import keiyoushi.annotation.Source
 import keiyoushi.network.get
 import keiyoushi.source.KeiSource
 import kotlinx.serialization.json.JsonElement
+import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
@@ -18,10 +19,17 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.parser.Parser
 import eu.kanade.tachiyomi.network.await
-import java.net.URLEncoder
 
 @Source
 abstract class MeuHentai : KeiSource() {
+
+    // Sobrescreve para adicionar Referer e User-Agent nas requisições de imagens
+    override fun imageRequestHeaders(page: Page): Headers {
+        return headersBuilder()
+            .set("Referer", "$baseUrl/")
+            .set("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36")
+            .build()
+    }
 
     private suspend fun fetchWithHeaders(url: String): Response {
         val request = Request.Builder()
@@ -149,6 +157,7 @@ abstract class MeuHentai : KeiSource() {
         }
     }
 
+    // Retorna a URL direta da imagem, sem proxy
     private fun extractPageImageUrl(img: org.jsoup.nodes.Element): String? {
         val attrs = listOf("data-full-url", "data-original", "data-src", "data-lazy-src", "src")
         for (attr in attrs) {
@@ -156,8 +165,7 @@ abstract class MeuHentai : KeiSource() {
             if (value.isNotBlank() && isPageImageUrl(value)) {
                 val fullUrl = if (value.startsWith("/")) "$baseUrl$value" else value
                 if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
-                    // Usa images.weserv.nl como proxy para contornar hotlink
-                    return "https://images.weserv.nl/?url=${URLEncoder.encode(fullUrl, "UTF-8")}"
+                    return fullUrl
                 }
             }
         }
@@ -169,7 +177,7 @@ abstract class MeuHentai : KeiSource() {
                 if (url.isNotBlank() && isPageImageUrl(url)) {
                     val fullUrl = if (url.startsWith("/")) "$baseUrl$url" else url
                     if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
-                        return "https://images.weserv.nl/?url=${URLEncoder.encode(fullUrl, "UTF-8")}"
+                        return fullUrl
                     }
                 }
             }
