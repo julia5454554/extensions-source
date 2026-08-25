@@ -23,19 +23,18 @@ import eu.kanade.tachiyomi.network.await
 @Source
 abstract class MeuHentai : KeiSource() {
 
-    // Sobrescreve para adicionar Referer e User-Agent nas requisições de imagens
-    override fun imageRequestHeaders(page: Page): Headers {
-        return headersBuilder()
-            .set("Referer", "$baseUrl/")
-            .set("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36")
+    // Headers globais para evitar bloqueio de hotlink
+    override val headers: Headers
+        get() = Headers.Builder()
+            .add("Referer", "$baseUrl/")
+            .add("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36")
             .build()
-    }
 
+    // Função auxiliar para requisições com os headers globais
     private suspend fun fetchWithHeaders(url: String): Response {
         val request = Request.Builder()
             .url(url)
-            .header("Referer", baseUrl)
-            .header("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36")
+            .headers(headers)
             .build()
         return client.newCall(request).await()
     }
@@ -127,6 +126,7 @@ abstract class MeuHentai : KeiSource() {
 
         val document = fetchWithHeaders(url).asJsoup()
 
+        // Extrai imagens das páginas (nome contém "pagina-")
         val images = document.select("img[src*='/wp-content/uploads/']")
         for (img in images) {
             if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
@@ -157,7 +157,7 @@ abstract class MeuHentai : KeiSource() {
         }
     }
 
-    // Retorna a URL direta da imagem, sem proxy
+    // Retorna a URL direta da imagem (sem proxy)
     private fun extractPageImageUrl(img: org.jsoup.nodes.Element): String? {
         val attrs = listOf("data-full-url", "data-original", "data-src", "data-lazy-src", "src")
         for (attr in attrs) {
