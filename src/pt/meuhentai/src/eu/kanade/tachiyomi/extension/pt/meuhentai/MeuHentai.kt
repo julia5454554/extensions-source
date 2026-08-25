@@ -82,9 +82,10 @@ abstract class MeuHentai : KeiSource() {
         status = SManga.COMPLETED
     }
 
+    // Corrigido: garante que o capítulo aponte para a primeira página
     private fun parseChapterList(document: Document, mangaUrl: String): List<SChapter> {
-        val firstPageUrl = document.selectFirst("a[href*='/pagina/1/']")?.attr("href")
-        val chapterUrl = firstPageUrl ?: mangaUrl
+        val baseUrl = mangaUrl.trimEnd('/')
+        val chapterUrl = if (baseUrl.endsWith("/pagina/1")) baseUrl else "$baseUrl/pagina/1/"
 
         return listOf(
             SChapter.create().apply {
@@ -96,9 +97,15 @@ abstract class MeuHentai : KeiSource() {
     }
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val chapterUrl = if (chapter.url.startsWith("http")) chapter.url else {
+        var chapterUrl = if (chapter.url.startsWith("http")) chapter.url else {
             "$baseUrl${if (chapter.url.startsWith("/")) chapter.url else "/${chapter.url}"}"
         }
+
+        // Garante que a URL aponte para a primeira página
+        if (!chapterUrl.contains("/pagina/")) {
+            chapterUrl = chapterUrl.trimEnd('/') + "/pagina/1/"
+        }
+
         val pages = mutableListOf<Page>()
         val visited = mutableSetOf<String>()
         collectPages(chapterUrl, pages, visited)
@@ -111,22 +118,6 @@ abstract class MeuHentai : KeiSource() {
 
         val document = client.get(url).asJsoup()
 
-        // Se a página não for /pagina/, tenta navegar para a primeira página do leitor
-        if (!url.contains("/pagina/")) {
-            val firstPageLink = document.selectFirst("a[href*='/pagina/1/']")
-            if (firstPageLink != null) {
-                collectPages(firstPageLink.attr("abs:href"), pages, visited)
-            } else {
-                val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
-                    ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
-                if (nextLink != null) {
-                    collectPages(nextLink.attr("abs:href"), pages, visited)
-                }
-            }
-            return
-        }
-
-        // Estamos em uma página de leitura (/pagina/N/)
         // Seleciona todas as imagens que estão em /wp-content/uploads/ (evita logos etc.)
         val images = document.select("img[src*='/wp-content/uploads/']")
         images.forEach { img ->
