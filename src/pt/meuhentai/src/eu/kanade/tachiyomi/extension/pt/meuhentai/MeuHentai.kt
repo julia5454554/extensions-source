@@ -19,13 +19,22 @@ import org.jsoup.parser.Parser
 @Source
 abstract class MeuHentai : KeiSource() {
 
+    // ============================== Popular (desativada) ==============================
+
     override suspend fun getPopularManga(page: Int): MangasPage {
+        // Retorna lista vazia para desativar a aba Popular
+        return MangasPage(emptyList(), false)
+    }
+
+    // ============================== Recentes ==============================
+
+    override suspend fun getLatestUpdates(page: Int): MangasPage {
         val url = if (page == 1) "$baseUrl/" else "$baseUrl/page/$page/"
         val response = client.get(url)
         return parseMangaList(response.asJsoup())
     }
 
-    override suspend fun getLatestUpdates(page: Int): MangasPage = getPopularManga(page)
+    // ============================== Busca ==============================
 
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
         val url = "$baseUrl/".toHttpUrl().newBuilder().apply {
@@ -38,6 +47,8 @@ abstract class MeuHentai : KeiSource() {
         val response = client.get(url)
         return parseMangaList(response.asJsoup())
     }
+
+    // ============================== Detalhes ==============================
 
     override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
         val path = url.encodedPath
@@ -84,6 +95,8 @@ abstract class MeuHentai : KeiSource() {
         status = SManga.COMPLETED
     }
 
+    // ============================== Capítulos ==============================
+
     private fun parseChapterList(document: Document, mangaUrl: String): List<SChapter> = listOf(
         SChapter.create().apply {
             name = "Capítulo Único"
@@ -92,14 +105,39 @@ abstract class MeuHentai : KeiSource() {
         },
     )
 
+    // ============================== Páginas ==============================
+
     override suspend fun getPageList(chapter: SChapter): List<Page> {
         val chapterUrl = if (chapter.url.startsWith("http")) chapter.url else {
             "$baseUrl${if (chapter.url.startsWith("/")) chapter.url else "/${chapter.url}"}"
         }
+        val document = client.get(chapterUrl).asJsoup()
+
+        // 1) Tenta extrair todas as imagens do JSON-LD (mais eficiente)
+        val jsonLdImages = extractImagesFromJsonLd(document)
+        if (jsonLdImages.isNotEmpty()) {
+            return jsonLdImages.mapIndexed { index, url ->
+                Page(index, imageUrl = url)
+            }
+        }
+
+        // 2) Fallback: navegação pelas páginas do capítulo
         val pages = mutableListOf<Page>()
         val visitedUrls = mutableSetOf<String>()
         collectPages(chapterUrl, pages, visitedUrls)
         return pages
+    }
+
+    private fun extractImagesFromJsonLd(document: Document): List<String> {
+        val script = document.selectFirst("script[type='application/ld+json']") ?: return emptyList()
+        val json = script.data()
+
+        // Tenta capturar contentUrl, depois url
+        val contentUrls = Regex(""""contentUrl"\s*:\s*"([^"]+)"""").findAll(json).map { it.groupValues[1] }.toList()
+        if (contentUrls.isNotEmpty()) return contentUrls
+
+        val urls = Regex(""""url"\s*:\s*"([^"]+)"""").findAll(json).map { it.groupValues[1] }.toList()
+        return urls
     }
 
     private suspend fun collectPages(url: String, pages: MutableList<Page>, visitedUrls: MutableSet<String>) {
@@ -107,7 +145,7 @@ abstract class MeuHentai : KeiSource() {
         visitedUrls.add(url)
 
         val document = client.get(url).asJsoup()
-        val images = document.select(".entry-content img, .post-content img, .reader-area img")
+        val images = document.select("#img_gallery_big, .entry-content img, .post-content img, .reader-area img, .gallery_pagination img")
         images.forEach { img ->
             val src = img.attr("data-src").ifBlank { img.attr("data-lazy-src") }.ifBlank { img.attr("src") }
             if (src.isNotBlank()) {
@@ -126,17 +164,23 @@ abstract class MeuHentai : KeiSource() {
         }
     }
 
+    // ============================== Filtros ==============================
+
     override fun getFilterList(data: JsonElement?): FilterList = FilterList()
+
+    // ============================== Listagem ==============================
 
     private fun parseMangaList(document: Document): MangasPage {
         val mangas = mutableListOf<SManga>()
         val seenUrls = mutableSetOf<String>()
+
         val elements = document.select(".lista-foto")
         for (element in elements) {
             val link = element.selectFirst("a.intentf") ?: element.selectFirst("a[href]") ?: continue
             val href = link.attr("href").trim()
             if (href.isBlank()) continue
 
+            // Remove o domínio se a URL for absoluta, guardando apenas o caminho (path)
             val mangaPath = href.substringAfter(baseUrl).ifBlank { href }
             if (seenUrls.contains(mangaPath)) continue
             seenUrls.add(mangaPath)
@@ -157,8 +201,10 @@ abstract class MeuHentai : KeiSource() {
                 },
             )
         }
+
         val hasNextPage = document.selectFirst("link[rel='next']") != null ||
             document.selectFirst(".next, .pagination .next, a[rel='next']") != null
+
         return MangasPage(mangas, hasNextPage)
     }
 }
