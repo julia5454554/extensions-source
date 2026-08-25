@@ -111,6 +111,7 @@ abstract class MeuHentai : KeiSource() {
 
         val document = client.get(url).asJsoup()
 
+        // Se a página não for /pagina/, tenta navegar para a primeira página do leitor
         if (!url.contains("/pagina/")) {
             val firstPageLink = document.selectFirst("a[href*='/pagina/1/']")
             if (firstPageLink != null) {
@@ -126,22 +127,27 @@ abstract class MeuHentai : KeiSource() {
         }
 
         // Estamos em uma página de leitura (/pagina/N/)
-        val mainImage = document.selectFirst("#img_gallery_big")
-        if (mainImage != null) {
-            val imageUrl = extractDirectImageUrl(mainImage)
+        // Seleciona todas as imagens que estão em /wp-content/uploads/ (evita logos etc.)
+        val images = document.select("img[src*='/wp-content/uploads/']")
+        images.forEach { img ->
+            val imageUrl = extractDirectImageUrl(img)
             if (imageUrl != null) {
                 pages.add(Page(pages.size, imageUrl = imageUrl))
             }
-        } else {
-            val images = document.select(".post-texto img, .entry-content img, .post-content img, .reader-area img")
-            images.forEach { img ->
-                val imageUrl = extractDirectImageUrl(img)
+        }
+
+        // Se nenhuma imagem foi encontrada, tenta o fallback para #img_gallery_big
+        if (pages.isEmpty()) {
+            val mainImage = document.selectFirst("#img_gallery_big")
+            if (mainImage != null) {
+                val imageUrl = extractDirectImageUrl(mainImage)
                 if (imageUrl != null) {
                     pages.add(Page(pages.size, imageUrl = imageUrl))
                 }
             }
         }
 
+        // Procura o link da próxima página
         val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
             ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
         if (nextLink != null) {
