@@ -93,20 +93,37 @@ abstract class MeuHentai : KeiSource() {
     )
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val chapterUrl = "$baseUrl${if (chapter.url.startsWith("/")) chapter.url else "/${chapter.url}"}"
-        val document = client.get(chapterUrl).asJsoup()
-        val images = document.select(".entry-content img, .post-content img, .reader-area img")
+        val chapterUrl = if (chapter.url.startsWith("http")) chapter.url else {
+            "$baseUrl${if (chapter.url.startsWith("/")) chapter.url else "/${chapter.url}"}"
+        }
         val pages = mutableListOf<Page>()
-        var index = 0
-        for (img in images) {
+        val visitedUrls = mutableSetOf<String>()
+        collectPages(chapterUrl, pages, visitedUrls)
+        return pages
+    }
+
+    private suspend fun collectPages(url: String, pages: MutableList<Page>, visitedUrls: MutableSet<String>) {
+        if (url in visitedUrls) return
+        visitedUrls.add(url)
+
+        val document = client.get(url).asJsoup()
+        val images = document.select(".entry-content img, .post-content img, .reader-area img")
+        images.forEach { img ->
             val src = img.attr("data-src").ifBlank { img.attr("data-lazy-src") }.ifBlank { img.attr("src") }
             if (src.isNotBlank()) {
                 val fullUrl = if (src.startsWith("/")) "$baseUrl$src" else src
-                pages.add(Page(index, imageUrl = fullUrl))
-                index++
+                pages.add(Page(pages.size, imageUrl = fullUrl))
             }
         }
-        return pages
+
+        val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
+            ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
+        if (nextLink != null) {
+            val nextUrl = nextLink.attr("abs:href")
+            if (nextUrl.isNotBlank()) {
+                collectPages(nextUrl, pages, visitedUrls)
+            }
+        }
     }
 
     override fun getFilterList(data: JsonElement?): FilterList = FilterList()
@@ -118,8 +135,11 @@ abstract class MeuHentai : KeiSource() {
         for (element in elements) {
             val link = element.selectFirst("a.intentf") ?: element.selectFirst("a[href]") ?: continue
             val href = link.attr("href").trim()
-            if (href.isBlank() || seenUrls.contains(href)) continue
-            seenUrls.add(href)
+            if (href.isBlank()) continue
+
+            val mangaPath = href.substringAfter(baseUrl).ifBlank { href }
+            if (seenUrls.contains(mangaPath)) continue
+            seenUrls.add(mangaPath)
 
             val mangaTitle = link.attr("title").trim()
                 .ifBlank { element.selectFirst("h2.white")?.text()?.trim().orEmpty() }
@@ -132,7 +152,7 @@ abstract class MeuHentai : KeiSource() {
             mangas.add(
                 SManga.create().apply {
                     title = Parser.unescapeEntities(mangaTitle, false)
-                    setUrlWithoutDomain(href)
+                    setUrlWithoutDomain(mangaPath)
                     thumbnail_url = img
                 },
             )
