@@ -18,6 +18,7 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.parser.Parser
 import eu.kanade.tachiyomi.network.await
+import java.net.URLEncoder
 
 @Source
 abstract class MeuHentai : KeiSource() {
@@ -155,7 +156,8 @@ abstract class MeuHentai : KeiSource() {
             if (value.isNotBlank() && isPageImageUrl(value)) {
                 val fullUrl = if (value.startsWith("/")) "$baseUrl$value" else value
                 if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
-                    return fullUrl // URL direta, sem proxy
+                    // Usa images.weserv.nl como proxy para contornar hotlink
+                    return "https://images.weserv.nl/?url=${URLEncoder.encode(fullUrl, "UTF-8")}"
                 }
             }
         }
@@ -167,7 +169,7 @@ abstract class MeuHentai : KeiSource() {
                 if (url.isNotBlank() && isPageImageUrl(url)) {
                     val fullUrl = if (url.startsWith("/")) "$baseUrl$url" else url
                     if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
-                        return fullUrl
+                        return "https://images.weserv.nl/?url=${URLEncoder.encode(fullUrl, "UTF-8")}"
                     }
                 }
             }
