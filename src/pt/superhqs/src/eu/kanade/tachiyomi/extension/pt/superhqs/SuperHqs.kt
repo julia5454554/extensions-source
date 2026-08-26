@@ -126,7 +126,6 @@ abstract class SuperHqs : KeiSource() {
             }
         }
 
-        // Se encontrou assinatura, filtra por similaridade (85%)
         if (baseSignature != null) {
             for (img in images) {
                 if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
@@ -140,7 +139,6 @@ abstract class SuperHqs : KeiSource() {
                 }
             }
         } else {
-            // Fallback numérico
             for (img in images) {
                 if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
 
@@ -151,7 +149,6 @@ abstract class SuperHqs : KeiSource() {
             }
         }
 
-        // Procura link da próxima página
         val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
             ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
         if (nextLink != null) {
@@ -162,7 +159,6 @@ abstract class SuperHqs : KeiSource() {
         }
     }
 
-    // Extrai a URL bruta da imagem
     private fun extractImageUrlRaw(img: Element): String? {
         val attrs = listOf("data-full-url", "data-original", "data-src", "data-lazy-src", "src")
         for (attr in attrs) {
@@ -191,32 +187,29 @@ abstract class SuperHqs : KeiSource() {
         return null
     }
 
-    // Gera uma assinatura somente com letras (remove números e hífens)
+    // Função atualizada para ignorar formato e sufixos
     private fun getImageSignature(imageUrl: String): String? {
-        val fileName = imageUrl.substringAfterLast('/').substringBeforeLast('.')
+        var fileName = imageUrl.substringAfterLast('/').substringBeforeLast('.')
+        fileName = fileName.replace(Regex("""(scaled|copy)""", RegexOption.IGNORE_CASE), "")
+        fileName = fileName.replace(Regex("""[-]?\d+$"""), "")
         val signature = fileName.filter { it.isLetter() }.lowercase()
         return if (signature.isNotEmpty()) signature else null
     }
 
-    // Verifica se as assinaturas são semelhantes (>= limiar definido, agora 85%)
     private fun areSignaturesSimilar(a: String, b: String, threshold: Double): Boolean {
         if (a == b) return true
-
         val maxLength = maxOf(a.length, b.length)
         if (maxLength == 0) return false
-
         val matches = a.zip(b).count { it.first == it.second }
         val similarity = matches.toDouble() / maxLength
         return similarity >= threshold
     }
 
-    // Verifica se a URL parece ser de uma página (contém números no nome)
     private fun isPageImage(url: String): Boolean {
         val fileName = url.substringAfterLast('/').lowercase()
         return fileName.matches(Regex(""".*-\d+.*\.(jpg|jpeg|png|webp)$"""))
     }
 
-    // Fallback numérico (mantido)
     private fun extractImageUrlWithNumericPattern(img: Element): String? {
         val imageUrl = extractImageUrlRaw(img)
         if (imageUrl != null) {
