@@ -126,7 +126,7 @@ abstract class SuperHqs : KeiSource() {
             }
         }
 
-        // Se encontrou assinatura, filtra por similaridade
+        // Se encontrou assinatura, filtra por similaridade (85%)
         if (baseSignature != null) {
             for (img in images) {
                 if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
@@ -134,7 +134,7 @@ abstract class SuperHqs : KeiSource() {
                 val imageUrl = extractImageUrlRaw(img)
                 if (imageUrl != null && isImageUrl(imageUrl)) {
                     val sig = getImageSignature(imageUrl)
-                    if (sig != null && areSignaturesSimilar(baseSignature, sig, 0.96)) {
+                    if (sig != null && areSignaturesSimilar(baseSignature, sig, 0.85)) {
                         pages.add(Page(pages.size, imageUrl = imageUrl))
                     }
                 }
@@ -198,7 +198,7 @@ abstract class SuperHqs : KeiSource() {
         return if (signature.isNotEmpty()) signature else null
     }
 
-    // Verifica se as assinaturas são semelhantes (>= 96%)
+    // Verifica se as assinaturas são semelhantes (>= limiar definido, agora 85%)
     private fun areSignaturesSimilar(a: String, b: String, threshold: Double): Boolean {
         if (a == b) return true
 
