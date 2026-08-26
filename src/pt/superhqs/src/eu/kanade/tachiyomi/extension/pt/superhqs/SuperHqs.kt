@@ -60,6 +60,7 @@ abstract class SuperHqs : KeiSource() {
         return SMangaUpdate(updatedManga, updatedChapters)
     }
 
+    // Detalhes do mangá
     private fun parseMangaDetails(document: Document): SManga = SManga.create().apply {
         val ogTitle = document.selectFirst("meta[property=og:title]")?.attr("content")
         val rawTitle = document.selectFirst("h1.title")?.text() ?: ogTitle ?: ""
@@ -72,7 +73,8 @@ abstract class SuperHqs : KeiSource() {
         }
 
         description = document.selectFirst("meta[property=og:description]")?.attr("content")
-            ?: document.selectFirst(".entry-content")?.text()
+            ?: document.selectFirst(".entry-content p")?.text()
+            ?: ""
 
         val categories = document.select(".category a, a[rel='category tag']")
             .map { it.text().trim() }
@@ -83,6 +85,7 @@ abstract class SuperHqs : KeiSource() {
         status = SManga.COMPLETED
     }
 
+    // Capítulo único: aponta para a URL do mangá
     private fun parseChapterList(document: Document, mangaUrl: String): List<SChapter> = listOf(
         SChapter.create().apply {
             name = "Capítulo Único"
@@ -95,20 +98,25 @@ abstract class SuperHqs : KeiSource() {
         val chapterUrl = if (chapter.url.startsWith("http")) chapter.url else {
             "$baseUrl${if (chapter.url.startsWith("/")) chapter.url else "/${chapter.url}"}"
         }
-        val mangaSlug = chapterUrl.split("/pagina/").first()
+
+        // Extrai o slug do mangá, removendo segmento /pagina/ se existir
+        val rawSlug = chapterUrl.split("/pagina/").first()
             .trimEnd('/')
             .substringAfterLast('/')
             .lowercase()
 
+        // Remove sufixo numérico (ex.: "-1", "-22") para obter o nome base
+        val mangaNameBase = rawSlug.replace(Regex("-\\d+$"), "")
+
         val pages = mutableListOf<Page>()
         val visited = mutableSetOf<String>()
-        collectPages(chapterUrl, mangaSlug, pages, visited)
+        collectPages(chapterUrl, mangaNameBase, pages, visited)
         return pages
     }
 
     private suspend fun collectPages(
         url: String,
-        mangaSlug: String,
+        mangaNameBase: String,
         pages: MutableList<Page>,
         visited: MutableSet<String>,
     ) {
@@ -116,38 +124,58 @@ abstract class SuperHqs : KeiSource() {
         visited.add(url)
 
         val document = client.get(url).asJsoup()
-
         val images = document.select("img[src*='/wp-content/uploads/']")
+
+        var foundByName = false
+
+        // Tenta primeiro pelo nome base do mangá
         for (img in images) {
             if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
 
-            val imageUrl = extractPageImageUrl(img, mangaSlug)
+            val imageUrl = extractImageUrlWithName(img, mangaNameBase)
             if (imageUrl != null) {
                 pages.add(Page(pages.size, imageUrl = imageUrl))
+                foundByName = true
             }
         }
 
-        if (pages.isEmpty()) {
-            val mainImage = document.selectFirst("#img_gallery_big")
-            if (mainImage != null) {
-                val imageUrl = extractPageImageUrl(mainImage, mangaSlug)
+        // Se NÃO encontrou nada pelo nome, tenta o padrão numérico
+        if (!foundByName) {
+            for (img in images) {
+                if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
+
+                val imageUrl = extractImageUrlWithNumericPattern(img)
                 if (imageUrl != null) {
                     pages.add(Page(pages.size, imageUrl = imageUrl))
                 }
             }
         }
 
+        // Fallback para #img_gallery_big (se houver)
+        if (pages.isEmpty()) {
+            val mainImage = document.selectFirst("#img_gallery_big")
+            if (mainImage != null) {
+                val imageUrl = extractImageUrlWithName(mainImage, mangaNameBase)
+                    ?: extractImageUrlWithNumericPattern(mainImage)
+                if (imageUrl != null) {
+                    pages.add(Page(pages.size, imageUrl = imageUrl))
+                }
+            }
+        }
+
+        // Procura link de próxima página (se houver)
         val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
             ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
         if (nextLink != null) {
             val nextUrl = nextLink.attr("abs:href")
             if (nextUrl.isNotBlank() && nextUrl != url) {
-                collectPages(nextUrl, mangaSlug, pages, visited)
+                collectPages(nextUrl, mangaNameBase, pages, visited)
             }
         }
     }
 
-    private fun extractPageImageUrl(img: Element, mangaSlug: String): String? {
+    // Extrai imagem filtrando pelo nome base do mangá
+    private fun extractImageUrlWithName(img: Element, mangaNameBase: String): String? {
         val attrs = listOf("data-full-url", "data-original", "data-src", "data-lazy-src", "src")
         for (attr in attrs) {
             val value = img.attr(attr).trim()
@@ -155,7 +183,7 @@ abstract class SuperHqs : KeiSource() {
                 val fullUrl = if (value.startsWith("/")) "$baseUrl$value" else value
                 if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
                     val fileName = fullUrl.substringAfterLast('/').lowercase()
-                    if (fileName.contains(mangaSlug)) {
+                    if (fileName.contains(mangaNameBase)) {
                         return fullUrl
                     }
                 }
@@ -170,7 +198,45 @@ abstract class SuperHqs : KeiSource() {
                     val fullUrl = if (url.startsWith("/")) "$baseUrl$url" else url
                     if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
                         val fileName = fullUrl.substringAfterLast('/').lowercase()
-                        if (fileName.contains(mangaSlug)) {
+                        if (fileName.contains(mangaNameBase)) {
+                            return fullUrl
+                        }
+                    }
+                }
+            }
+        }
+
+        return null
+    }
+
+    // Extrai imagem que tenha padrão numérico no final do nome (ex.: 01-84.jpg ou 01.jpg)
+    private fun extractImageUrlWithNumericPattern(img: Element): String? {
+        val attrs = listOf("data-full-url", "data-original", "data-src", "data-lazy-src", "src")
+        for (attr in attrs) {
+            val value = img.attr(attr).trim()
+            if (value.isNotBlank() && isImageUrl(value)) {
+                val fullUrl = if (value.startsWith("/")) "$baseUrl$value" else value
+                if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
+                    val fileName = fullUrl.substringAfterLast('/').lowercase()
+                    // Aceita padrões como: nome-1-2.jpg, nome-01-02.jpg, nome-1.jpg, nome-01.jpg
+                    if (fileName.matches(Regex(""".*-\d+-\d+\.(jpg|jpeg|png|webp)$""")) ||
+                        fileName.matches(Regex(""".*-\d+\.(jpg|jpeg|png|webp)$"""))) {
+                        return fullUrl
+                    }
+                }
+            }
+        }
+
+        val srcset = img.attr("srcset")
+        if (srcset.isNotBlank()) {
+            val srcsetUrls = srcset.split(",").map { it.trim().substringBefore(" ") }
+            for (url in srcsetUrls.reversed()) {
+                if (url.isNotBlank() && isImageUrl(url)) {
+                    val fullUrl = if (url.startsWith("/")) "$baseUrl$url" else url
+                    if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
+                        val fileName = fullUrl.substringAfterLast('/').lowercase()
+                        if (fileName.matches(Regex(""".*-\d+-\d+\.(jpg|jpeg|png|webp)$""")) ||
+                            fileName.matches(Regex(""".*-\d+\.(jpg|jpeg|png|webp)$"""))) {
                             return fullUrl
                         }
                     }
@@ -218,7 +284,6 @@ abstract class SuperHqs : KeiSource() {
         }
 
         val hasNextPage = document.selectFirst("link[rel='next'], a.next.page-numbers, .next, .pagination .next, a[rel='next']") != null
-
         return MangasPage(mangas, hasNextPage)
     }
 }
