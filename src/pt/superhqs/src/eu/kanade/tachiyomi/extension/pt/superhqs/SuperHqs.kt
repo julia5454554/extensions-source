@@ -60,7 +60,6 @@ abstract class SuperHqs : KeiSource() {
         return SMangaUpdate(updatedManga, updatedChapters)
     }
 
-    // Detalhes do mangá
     private fun parseMangaDetails(document: Document): SManga = SManga.create().apply {
         val ogTitle = document.selectFirst("meta[property=og:title]")?.attr("content")
         val rawTitle = document.selectFirst("h1.title")?.text() ?: ogTitle ?: ""
@@ -85,7 +84,6 @@ abstract class SuperHqs : KeiSource() {
         status = SManga.COMPLETED
     }
 
-    // Capítulo único: aponta para a URL do mangá
     private fun parseChapterList(document: Document, mangaUrl: String): List<SChapter> = listOf(
         SChapter.create().apply {
             name = "Capítulo Único"
@@ -99,24 +97,14 @@ abstract class SuperHqs : KeiSource() {
             "$baseUrl${if (chapter.url.startsWith("/")) chapter.url else "/${chapter.url}"}"
         }
 
-        // Extrai o slug do mangá, removendo segmento /pagina/ se existir
-        val rawSlug = chapterUrl.split("/pagina/").first()
-            .trimEnd('/')
-            .substringAfterLast('/')
-            .lowercase()
-
-        // Remove sufixo numérico (ex.: "-1", "-22") para obter o nome base
-        val mangaNameBase = rawSlug.replace(Regex("-\\d+$"), "")
-
         val pages = mutableListOf<Page>()
         val visited = mutableSetOf<String>()
-        collectPages(chapterUrl, mangaNameBase, pages, visited)
+        collectPages(chapterUrl, pages, visited)
         return pages
     }
 
     private suspend fun collectPages(
         url: String,
-        mangaNameBase: String,
         pages: MutableList<Page>,
         visited: MutableSet<String>,
     ) {
@@ -126,21 +114,33 @@ abstract class SuperHqs : KeiSource() {
         val document = client.get(url).asJsoup()
         val images = document.select("img[src*='/wp-content/uploads/']")
 
-        var foundByName = false
-
-        // Tenta primeiro pelo nome base do mangá
+        // Obtém a assinatura da primeira imagem relevante
+        var baseSignature: String? = null
         for (img in images) {
             if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
 
-            val imageUrl = extractImageUrlWithName(img, mangaNameBase)
-            if (imageUrl != null) {
-                pages.add(Page(pages.size, imageUrl = imageUrl))
-                foundByName = true
+            val imageUrl = extractImageUrlRaw(img)
+            if (imageUrl != null && isPageImage(imageUrl)) {
+                baseSignature = getImageSignature(imageUrl)
+                if (baseSignature != null) break
             }
         }
 
-        // Se NÃO encontrou nada pelo nome, tenta o padrão numérico
-        if (!foundByName) {
+        // Se encontrou assinatura, filtra por similaridade
+        if (baseSignature != null) {
+            for (img in images) {
+                if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
+
+                val imageUrl = extractImageUrlRaw(img)
+                if (imageUrl != null && isImageUrl(imageUrl)) {
+                    val sig = getImageSignature(imageUrl)
+                    if (sig != null && areSignaturesSimilar(baseSignature, sig, 0.96)) {
+                        pages.add(Page(pages.size, imageUrl = imageUrl))
+                    }
+                }
+            }
+        } else {
+            // Fallback numérico
             for (img in images) {
                 if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
 
@@ -151,41 +151,26 @@ abstract class SuperHqs : KeiSource() {
             }
         }
 
-        // Fallback para #img_gallery_big (se houver)
-        if (pages.isEmpty()) {
-            val mainImage = document.selectFirst("#img_gallery_big")
-            if (mainImage != null) {
-                val imageUrl = extractImageUrlWithName(mainImage, mangaNameBase)
-                    ?: extractImageUrlWithNumericPattern(mainImage)
-                if (imageUrl != null) {
-                    pages.add(Page(pages.size, imageUrl = imageUrl))
-                }
-            }
-        }
-
-        // Procura link de próxima página (se houver)
+        // Procura link da próxima página
         val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
             ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
         if (nextLink != null) {
             val nextUrl = nextLink.attr("abs:href")
             if (nextUrl.isNotBlank() && nextUrl != url) {
-                collectPages(nextUrl, mangaNameBase, pages, visited)
+                collectPages(nextUrl, pages, visited)
             }
         }
     }
 
-    // Extrai imagem filtrando pelo nome base do mangá
-    private fun extractImageUrlWithName(img: Element, mangaNameBase: String): String? {
+    // Extrai a URL bruta da imagem
+    private fun extractImageUrlRaw(img: Element): String? {
         val attrs = listOf("data-full-url", "data-original", "data-src", "data-lazy-src", "src")
         for (attr in attrs) {
             val value = img.attr(attr).trim()
             if (value.isNotBlank() && isImageUrl(value)) {
                 val fullUrl = if (value.startsWith("/")) "$baseUrl$value" else value
                 if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
-                    val fileName = fullUrl.substringAfterLast('/').lowercase()
-                    if (fileName.contains(mangaNameBase)) {
-                        return fullUrl
-                    }
+                    return fullUrl
                 }
             }
         }
@@ -197,10 +182,7 @@ abstract class SuperHqs : KeiSource() {
                 if (url.isNotBlank() && isImageUrl(url)) {
                     val fullUrl = if (url.startsWith("/")) "$baseUrl$url" else url
                     if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
-                        val fileName = fullUrl.substringAfterLast('/').lowercase()
-                        if (fileName.contains(mangaNameBase)) {
-                            return fullUrl
-                        }
+                        return fullUrl
                     }
                 }
             }
@@ -209,41 +191,41 @@ abstract class SuperHqs : KeiSource() {
         return null
     }
 
-    // Extrai imagem que tenha padrão numérico no final do nome (ex.: 01-84.jpg ou 01.jpg)
+    // Gera uma assinatura somente com letras (remove números e hífens)
+    private fun getImageSignature(imageUrl: String): String? {
+        val fileName = imageUrl.substringAfterLast('/').substringBeforeLast('.')
+        val signature = fileName.filter { it.isLetter() }.lowercase()
+        return if (signature.isNotEmpty()) signature else null
+    }
+
+    // Verifica se as assinaturas são semelhantes (>= 96%)
+    private fun areSignaturesSimilar(a: String, b: String, threshold: Double): Boolean {
+        if (a == b) return true
+
+        val maxLength = maxOf(a.length, b.length)
+        if (maxLength == 0) return false
+
+        val matches = a.zip(b).count { it.first == it.second }
+        val similarity = matches.toDouble() / maxLength
+        return similarity >= threshold
+    }
+
+    // Verifica se a URL parece ser de uma página (contém números no nome)
+    private fun isPageImage(url: String): Boolean {
+        val fileName = url.substringAfterLast('/').lowercase()
+        return fileName.matches(Regex(""".*-\d+.*\.(jpg|jpeg|png|webp)$"""))
+    }
+
+    // Fallback numérico (mantido)
     private fun extractImageUrlWithNumericPattern(img: Element): String? {
-        val attrs = listOf("data-full-url", "data-original", "data-src", "data-lazy-src", "src")
-        for (attr in attrs) {
-            val value = img.attr(attr).trim()
-            if (value.isNotBlank() && isImageUrl(value)) {
-                val fullUrl = if (value.startsWith("/")) "$baseUrl$value" else value
-                if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
-                    val fileName = fullUrl.substringAfterLast('/').lowercase()
-                    // Aceita padrões como: nome-1-2.jpg, nome-01-02.jpg, nome-1.jpg, nome-01.jpg
-                    if (fileName.matches(Regex(""".*-\d+-\d+\.(jpg|jpeg|png|webp)$""")) ||
-                        fileName.matches(Regex(""".*-\d+\.(jpg|jpeg|png|webp)$"""))) {
-                        return fullUrl
-                    }
-                }
+        val imageUrl = extractImageUrlRaw(img)
+        if (imageUrl != null) {
+            val fileName = imageUrl.substringAfterLast('/').lowercase()
+            if (fileName.matches(Regex(""".*-\d+-\d+\.(jpg|jpeg|png|webp)$""")) ||
+                fileName.matches(Regex(""".*-\d+\.(jpg|jpeg|png|webp)$"""))) {
+                return imageUrl
             }
         }
-
-        val srcset = img.attr("srcset")
-        if (srcset.isNotBlank()) {
-            val srcsetUrls = srcset.split(",").map { it.trim().substringBefore(" ") }
-            for (url in srcsetUrls.reversed()) {
-                if (url.isNotBlank() && isImageUrl(url)) {
-                    val fullUrl = if (url.startsWith("/")) "$baseUrl$url" else url
-                    if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
-                        val fileName = fullUrl.substringAfterLast('/').lowercase()
-                        if (fileName.matches(Regex(""".*-\d+-\d+\.(jpg|jpeg|png|webp)$""")) ||
-                            fileName.matches(Regex(""".*-\d+\.(jpg|jpeg|png|webp)$"""))) {
-                            return fullUrl
-                        }
-                    }
-                }
-            }
-        }
-
         return null
     }
 
