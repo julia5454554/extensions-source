@@ -8,7 +8,7 @@ keiyoushi {
     name = "TheHentaiComics"
     versionCode = 1
     contentWarning = ContentWarning.NSFW
-    libVersion = "1.4"
+    libVersion = "1.44"
 
     source {
         lang = "pt-BR"
