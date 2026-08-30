@@ -1,41 +1,17 @@
+import io.github.keiyoushi.gradle.api.ContentWarning
+
 plugins {
-    id("com.android.application")
-    id("kotlin-android")
-    id("eu.kanade.tachiyomi.extension")
+    alias(kei.plugins.extension)
 }
 
-android {
-    namespace = "eu.kanade.tachiyomi.extension.pt.nhentainetbr"
-    compileSdk = 34
+keiyoushi {
+    name = "NHentaiNetBr"
+    versionCode = 1
+    contentWarning = ContentWarning.NSFW
+    libVersion = "1.4"
 
-    defaultConfig {
-        applicationId = "eu.kanade.tachiyomi.extension.pt.nhentainetbr"
-        minSdk = 21
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+    source {
+        lang = "pt-BR"
+        baseUrl = "https://nhentai.net.br"
     }
-
-    buildTypes {
-        release {
-            isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-        }
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-}
-
-dependencies {
-    implementation(project(":core"))
 }
