@@ -29,45 +29,39 @@ class NHentaiNetBr(
     override val baseUrl = "https://nhentai.net.br"
     override val supportsLatest = true
 
-    // Mapa para armazenar a próxima URL de cada tipo de listagem
-    private val nextPageUrls = mutableMapOf<String, String>()
-
     override fun OkHttpClient.Builder.configureClient(): OkHttpClient.Builder = apply {
         rateLimit(2) { !it.encodedPath.startsWith("/wp-content/uploads/") }
+
+        // Desativado temporariamente para diagnóstico
+        followRedirects(false)
+        followSslRedirects(false)
     }
 
     // ===== Listagem =====
-    override suspend fun getPopularManga(page: Int): MangasPage = fetchListing("$baseUrl/popular/", page, "popular")
+    override suspend fun getPopularManga(page: Int): MangasPage = fetchListing("$baseUrl/popular/", page)
 
-    override suspend fun getLatestUpdates(page: Int): MangasPage = fetchListing("$baseUrl/ultimos/", page, "ultimos")
+    override suspend fun getLatestUpdates(page: Int): MangasPage = fetchListing("$baseUrl/ultimos/", page)
 
-    private suspend fun fetchListing(listingUrl: String, page: Int, type: String): MangasPage {
-        val url = if (page == 1) {
-            listingUrl
+    private suspend fun fetchListing(listingUrl: String, page: Int): MangasPage {
+        val base = listingUrl.trimEnd('/')
+        val url = if (page > 1) {
+            "$base/page/$page/"
         } else {
-            // Usa a próxima URL salva da página anterior
-            nextPageUrls[type] ?: run {
-                // Fallback: constrói manualmente (apenas para caso de acesso direto)
-                val base = listingUrl.trimEnd('/')
-                "$base/page/$page/"
-            }
+            listingUrl
         }
+
+        println("NHENTAI REQUEST: $url")
 
         val response = client.get(url)
-        val document = response.asJsoup()
-        val (mangas, nextUrl) = parseListing(document)
 
-        // Salva a próxima URL se existir
-        if (nextUrl != null) {
-            nextPageUrls[type] = nextUrl
-        } else {
-            nextPageUrls.remove(type)
-        }
+        println("NHENTAI CODE: ${response.code}")
+        println("NHENTAI URL: ${response.request.url}")
+        println("NHENTAI LOCATION: ${response.header("Location")}")
 
-        return MangasPage(mangas, nextUrl != null)
+        return parseListing(response.asJsoup(), response.request.url.toString())
     }
 
-    private fun parseListing(document: Document): Pair<List<SManga>, String?> {
+    private fun parseListing(document: Document, requestUrl: String): MangasPage {
         val mangas = document.select("div.thumb-conteudo").mapNotNull { element ->
             val linkElement = element.selectFirst("a[href*='$baseUrl/']:not(.thumbParodiaNome)") ?: return@mapNotNull null
             val title = element.selectFirst(".thumb-titulo")?.text()?.trim() ?: return@mapNotNull null
@@ -85,9 +79,9 @@ class NHentaiNetBr(
             } else null
         }
 
-        // Extrai a URL da próxima página a partir do link "Próxima página"
         val nextPageUrl = document.selectFirst("ul.paginacao li.next a")?.absUrl("href")
-        return Pair(mangas, nextPageUrl)
+        val hasNextPage = nextPageUrl != null && nextPageUrl != requestUrl
+        return MangasPage(mangas, hasNextPage)
     }
 
     // ===== Busca =====
@@ -97,9 +91,7 @@ class NHentaiNetBr(
             .apply { if (page > 1) addQueryParameter("paged", page.toString()) }
             .build()
         val response = client.get(url)
-        val document = response.asJsoup()
-        val (mangas, nextUrl) = parseListing(document)
-        return MangasPage(mangas, nextUrl != null)
+        return parseListing(response.asJsoup(), response.request.url.toString())
     }
 
     // ===== Detalhes e capítulos via fetchMangaUpdate =====
