@@ -25,6 +25,8 @@ class NHentaiNetBr(
     override val id: Long = 0L,
 ) : KeiSource() {
 
+    override val name = "nhentai.net.br"
+    override val baseUrl = "https://nhentai.net.br"
     override val supportsLatest = true
 
     override fun OkHttpClient.Builder.configureClient(): OkHttpClient.Builder = apply {
