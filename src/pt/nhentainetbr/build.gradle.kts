@@ -8,7 +8,7 @@ keiyoushi {
     name = "NHentaiNetBr"
     versionCode = 1
     contentWarning = ContentWarning.NSFW
-    libVersion = "1.4"
+    libVersion = "1.4"   // <-- ESTA LINHA É OBRIGATÓRIA
 
     source {
         lang = "pt-BR"
