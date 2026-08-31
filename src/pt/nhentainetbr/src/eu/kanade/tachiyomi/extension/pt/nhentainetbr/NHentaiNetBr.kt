@@ -31,10 +31,6 @@ class NHentaiNetBr(
 
     override fun OkHttpClient.Builder.configureClient(): OkHttpClient.Builder = apply {
         rateLimit(2) { !it.encodedPath.startsWith("/wp-content/uploads/") }
-
-        // Desativado temporariamente para diagnóstico
-        followRedirects(false)
-        followSslRedirects(false)
     }
 
     // ===== Listagem =====
@@ -44,20 +40,9 @@ class NHentaiNetBr(
 
     private suspend fun fetchListing(listingUrl: String, page: Int): MangasPage {
         val base = listingUrl.trimEnd('/')
-        val url = if (page > 1) {
-            "$base/page/$page/"
-        } else {
-            listingUrl
-        }
-
-        println("NHENTAI REQUEST: $url")
-
+        // Remove a barra final da URL de paginação para evitar redirecionamento 301
+        val url = if (page > 1) "$base/page/$page" else listingUrl
         val response = client.get(url)
-
-        println("NHENTAI CODE: ${response.code}")
-        println("NHENTAI URL: ${response.request.url}")
-        println("NHENTAI LOCATION: ${response.header("Location")}")
-
         return parseListing(response.asJsoup(), response.request.url.toString())
     }
 
@@ -77,6 +62,11 @@ class NHentaiNetBr(
                     this.thumbnail_url = thumb
                 }
             } else null
+        }
+
+        // Se a página não contém mangás, encerra paginação
+        if (mangas.isEmpty()) {
+            return MangasPage(emptyList(), false)
         }
 
         val nextPageUrl = document.selectFirst("ul.paginacao li.next a")?.absUrl("href")
