@@ -12,6 +12,7 @@ import keiyoushi.annotation.Source
 import keiyoushi.network.get
 import keiyoushi.network.rateLimit
 import keiyoushi.source.KeiSource
+import kotlinx.coroutines.delay
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -30,9 +31,8 @@ class NHentaiNetBr(
     override val supportsLatest = true
 
     override fun OkHttpClient.Builder.configureClient(): OkHttpClient.Builder = apply {
-        // Aumenta o limite de redirecionamentos para evitar "Too many follow-up requests"
-        followUpRequests(50)
-        rateLimit(2) { !it.encodedPath.startsWith("/wp-content/uploads/") }
+        // Limita a 1 requisição por segundo para evitar sobrecarga no servidor
+        rateLimit(1) { !it.encodedPath.startsWith("/wp-content/uploads/") }
     }
 
     // ===== Listagem =====
@@ -41,6 +41,8 @@ class NHentaiNetBr(
     override suspend fun getLatestUpdates(page: Int): MangasPage = fetchListing("$baseUrl/ultimos/", page)
 
     private suspend fun fetchListing(listingUrl: String, page: Int): MangasPage {
+        // Atraso de 2 segundos entre páginas (exceto a primeira) para evitar erros de rate limit
+        if (page > 1) delay(2000)
         val url = if (page > 1) "$listingUrl/page/$page/" else listingUrl
         return parseListing(client.get(url).asJsoup())
     }
@@ -63,7 +65,6 @@ class NHentaiNetBr(
             } else null
         }
 
-        // Correção: usar seletor específico para paginação do site
         val hasNextPage = document.selectFirst("ul.paginacao li.next a") != null
         return MangasPage(mangas, hasNextPage)
     }
