@@ -20,7 +20,10 @@ import org.jsoup.nodes.Element
 import kotlin.time.Instant
 
 @Source
-class NHentaiNetBr : KeiSource() {
+class NHentaiNetBr(
+    override val lang: String = "pt-BR",
+    override val id: Long = 0L,
+) : KeiSource() {
 
     override val supportsLatest = true
 
