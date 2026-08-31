@@ -29,23 +29,45 @@ class NHentaiNetBr(
     override val baseUrl = "https://nhentai.net.br"
     override val supportsLatest = true
 
+    // Mapa para armazenar a próxima URL de cada tipo de listagem
+    private val nextPageUrls = mutableMapOf<String, String>()
+
     override fun OkHttpClient.Builder.configureClient(): OkHttpClient.Builder = apply {
         rateLimit(2) { !it.encodedPath.startsWith("/wp-content/uploads/") }
     }
 
     // ===== Listagem =====
-    override suspend fun getPopularManga(page: Int): MangasPage = fetchListing("$baseUrl/popular/", page)
+    override suspend fun getPopularManga(page: Int): MangasPage = fetchListing("$baseUrl/popular/", page, "popular")
 
-    override suspend fun getLatestUpdates(page: Int): MangasPage = fetchListing("$baseUrl/ultimos/", page)
+    override suspend fun getLatestUpdates(page: Int): MangasPage = fetchListing("$baseUrl/ultimos/", page, "ultimos")
 
-    private suspend fun fetchListing(listingUrl: String, page: Int): MangasPage {
-        val base = listingUrl.trimEnd('/')
-        val url = if (page > 1) "$base/page/$page/" else listingUrl
+    private suspend fun fetchListing(listingUrl: String, page: Int, type: String): MangasPage {
+        val url = if (page == 1) {
+            listingUrl
+        } else {
+            // Usa a próxima URL salva da página anterior
+            nextPageUrls[type] ?: run {
+                // Fallback: constrói manualmente (apenas para caso de acesso direto)
+                val base = listingUrl.trimEnd('/')
+                "$base/page/$page/"
+            }
+        }
+
         val response = client.get(url)
-        return parseListing(response.asJsoup(), response.request.url.toString())
+        val document = response.asJsoup()
+        val (mangas, nextUrl) = parseListing(document)
+
+        // Salva a próxima URL se existir
+        if (nextUrl != null) {
+            nextPageUrls[type] = nextUrl
+        } else {
+            nextPageUrls.remove(type)
+        }
+
+        return MangasPage(mangas, nextUrl != null)
     }
 
-    private fun parseListing(document: Document, requestUrl: String): MangasPage {
+    private fun parseListing(document: Document): Pair<List<SManga>, String?> {
         val mangas = document.select("div.thumb-conteudo").mapNotNull { element ->
             val linkElement = element.selectFirst("a[href*='$baseUrl/']:not(.thumbParodiaNome)") ?: return@mapNotNull null
             val title = element.selectFirst(".thumb-titulo")?.text()?.trim() ?: return@mapNotNull null
@@ -63,25 +85,9 @@ class NHentaiNetBr(
             } else null
         }
 
-        // Extrai número da página atual da URL
-        val currentPage = PAGE_REGEX.find(requestUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-
-        // Extrai o maior número de página da paginação
-        val totalPages = document.select("ul.paginacao li a")
-            .mapNotNull { link ->
-                val href = link.attr("href")
-                PAGE_REGEX.find(href)?.groupValues?.get(1)?.toIntOrNull()
-            }
-            .maxOrNull() ?: currentPage
-
-        // Se não conseguir extrair total, usa fallback do botão "Próxima"
-        val hasNextPage = if (totalPages <= currentPage) {
-            document.selectFirst("ul.paginacao li.next a") != null
-        } else {
-            currentPage < totalPages
-        }
-
-        return MangasPage(mangas, hasNextPage)
+        // Extrai a URL da próxima página a partir do link "Próxima página"
+        val nextPageUrl = document.selectFirst("ul.paginacao li.next a")?.absUrl("href")
+        return Pair(mangas, nextPageUrl)
     }
 
     // ===== Busca =====
@@ -91,7 +97,9 @@ class NHentaiNetBr(
             .apply { if (page > 1) addQueryParameter("paged", page.toString()) }
             .build()
         val response = client.get(url)
-        return parseListing(response.asJsoup(), response.request.url.toString())
+        val document = response.asJsoup()
+        val (mangas, nextUrl) = parseListing(document)
+        return MangasPage(mangas, nextUrl != null)
     }
 
     // ===== Detalhes e capítulos via fetchMangaUpdate =====
@@ -188,6 +196,5 @@ class NHentaiNetBr(
 
     companion object {
         private val CHAPTER_NUMBER_REGEX = Regex("""(\d+(?:\.\d+)?)""")
-        private val PAGE_REGEX = Regex("""/page/(\d+)/?$""")
     }
 }
