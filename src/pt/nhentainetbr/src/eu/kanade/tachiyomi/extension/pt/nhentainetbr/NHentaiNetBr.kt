@@ -61,8 +61,8 @@ class NHentaiNetBr(
             } else null
         }
 
-        val hasNextPage = document.selectFirst("link[rel='next']") != null ||
-            document.selectFirst("a.next") != null
+        // Correção: usar seletor específico para paginação do site
+        val hasNextPage = document.selectFirst("ul.paginacao li.next a") != null
         return MangasPage(mangas, hasNextPage)
     }
 
