@@ -5,7 +5,6 @@ import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.annotation.Source
@@ -75,29 +74,9 @@ class NHentaiNetBr(
         return parseListing(client.get(url).asJsoup())
     }
 
-    // ===== Detalhes e capítulos =====
-    override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
-        if (url.host != baseUrl.toHttpUrl().host) return null
-        val slug = url.pathSegments.firstOrNull()?.takeIf { it.isNotEmpty() } ?: return null
-        val manga = SManga.create().apply { this.url = "/$slug/" }
-        return fetchMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = false)
-            .manga
-            .apply { initialized = true }
-    }
-
-    override suspend fun fetchMangaUpdate(
-        manga: SManga,
-        chapters: List<SChapter>,
-        fetchDetails: Boolean,
-        fetchChapters: Boolean,
-    ): SMangaUpdate {
+    // ===== Detalhes =====
+    override suspend fun getMangaDetails(manga: SManga): SManga {
         val document = client.get(baseUrl + manga.url).asJsoup()
-
-        val galleries = document.select("div.galeriaTabItem")
-        val date = document.selectFirst("meta[property=article:published_time]")
-            ?.attr("content")
-            .toTimestamp()
-
         val updatedManga = SManga.create().apply {
             url = manga.url
             title = document.selectFirst("h1.post-titulo")?.text()?.trim()
@@ -114,11 +93,31 @@ class NHentaiNetBr(
             ).eachText().distinct().joinToString(", ")
 
             status = SManga.COMPLETED
-            update_strategy = if (galleries.isEmpty()) UpdateStrategy.ONLY_FETCH_ONCE else UpdateStrategy.ALWAYS_UPDATE
+            update_strategy = if (document.select("div.galeriaTabItem").isEmpty()) {
+                UpdateStrategy.ONLY_FETCH_ONCE
+            } else {
+                UpdateStrategy.ALWAYS_UPDATE
+            }
         }
+        return updatedManga
+    }
 
-        val newChapters = when {
-            galleries.isEmpty() -> listOf(
+    override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
+        if (url.host != baseUrl.toHttpUrl().host) return null
+        val slug = url.pathSegments.firstOrNull()?.takeIf { it.isNotEmpty() } ?: return null
+        return getMangaDetails(SManga.create().apply { this.url = "/$slug/" })
+    }
+
+    // ===== Capítulos =====
+    override suspend fun getChapterList(manga: SManga): List<SChapter> {
+        val document = client.get(baseUrl + manga.url).asJsoup()
+        val galleries = document.select("div.galeriaTabItem")
+        val date = document.selectFirst("meta[property=article:published_time]")
+            ?.attr("content")
+            .toTimestamp()
+
+        return if (galleries.isEmpty()) {
+            listOf(
                 SChapter.create().apply {
                     url = manga.url
                     name = "Capítulo Único"
@@ -126,10 +125,9 @@ class NHentaiNetBr(
                     date_upload = date
                 },
             )
-            else -> galleries.mapNotNull { it.toSChapter(manga.url, date) }.reversed()
+        } else {
+            galleries.mapNotNull { it.toSChapter(manga.url, date) }.reversed()
         }
-
-        return SMangaUpdate(updatedManga, newChapters)
     }
 
     private fun Element.toSChapter(mangaUrl: String, date: Long): SChapter? {
