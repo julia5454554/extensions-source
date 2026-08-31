@@ -20,13 +20,8 @@ import org.jsoup.nodes.Element
 import kotlin.time.Instant
 
 @Source
-class NHentaiNetBr(
-    override val lang: String = "pt-BR",
-    override val id: Long = 0L,
-) : KeiSource() {
+class NHentaiNetBr : KeiSource() {
 
-    override val name = "nhentai.net.br"
-    override val baseUrl = "https://nhentai.net.br"
     override val supportsLatest = true
 
     override fun OkHttpClient.Builder.configureClient(): OkHttpClient.Builder = apply {
