@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.extension.pt.nhentainetbr
 
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
