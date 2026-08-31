@@ -11,14 +11,12 @@ import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.annotation.Source
-import keiyoushi.network.rateLimit
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Element
-import kotlin.time.Duration.Companion.seconds
 
 @Source
 class NHentaiNetBr(
@@ -30,9 +28,7 @@ class NHentaiNetBr(
     override val baseUrl = "https://nhentai.net.br"
     override val supportsLatest = true
 
-    override val client: OkHttpClient = network.client.newBuilder()
-        .rateLimit(1, 2.seconds)
-        .build()
+    override val client: OkHttpClient = network.client.newBuilder().build()
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("Referer", baseUrl)
