@@ -40,38 +40,53 @@ class NHentaiNetBr(
 
     private suspend fun fetchListing(listingUrl: String, page: Int): MangasPage {
         val base = listingUrl.trimEnd('/')
-        // Remove a barra final da URL de paginação para evitar redirecionamento 301
-        val url = if (page > 1) "$base/page/$page" else listingUrl
-        val response = client.get(url)
-        return parseListing(response.asJsoup(), response.request.url.toString())
+        val url = if (page > 1) {
+            "$base/page/$page"
+        } else {
+            base
+        }
+
+        println("NHENTAI DEBUG REQUEST = $url")
+
+        return try {
+            val response = client.get(url)
+
+            println("NHENTAI DEBUG CODE = ${response.code}")
+            println("NHENTAI DEBUG FINAL = ${response.request.url}")
+            println("NHENTAI DEBUG LOCATION = ${response.header("Location")}")
+
+            parseListing(response.asJsoup())
+        } catch (e: Exception) {
+            println("NHENTAI DEBUG ERROR = ${e.message}")
+            throw e
+        }
     }
 
-    private fun parseListing(document: Document, requestUrl: String): MangasPage {
+    private fun parseListing(document: Document): MangasPage {
         val mangas = document.select("div.thumb-conteudo").mapNotNull { element ->
-            val linkElement = element.selectFirst("a[href*='$baseUrl/']:not(.thumbParodiaNome)") ?: return@mapNotNull null
+            val linkElement = element.selectFirst("a[href]:not(.thumbParodiaNome)") ?: return@mapNotNull null
             val title = element.selectFirst(".thumb-titulo")?.text()?.trim() ?: return@mapNotNull null
-            val url = linkElement.absUrl("href").toHttpUrl().encodedPath
-            val thumb = element.selectFirst("img")?.let { img ->
+            val url = linkElement.absUrl("href")
+
+            if (!url.startsWith(baseUrl) || title.isEmpty()) {
+                return@mapNotNull null
+            }
+
+            val thumbnail = element.selectFirst("img")?.let { img ->
                 img.absUrl("data-src").ifEmpty { img.absUrl("src") }
-            } ?: ""
+            }.orEmpty()
 
-            if (title.isNotEmpty() && url.startsWith("/")) {
-                SManga.create().apply {
-                    this.url = url
-                    this.title = title
-                    this.thumbnail_url = thumb
-                }
-            } else null
+            SManga.create().apply {
+                this.url = url.toHttpUrl().encodedPath
+                this.title = title
+                thumbnail_url = thumbnail
+            }
         }
 
-        // Se a página não contém mangás, encerra paginação
-        if (mangas.isEmpty()) {
-            return MangasPage(emptyList(), false)
-        }
-
-        val nextPageUrl = document.selectFirst("ul.paginacao li.next a")?.absUrl("href")
-        val hasNextPage = nextPageUrl != null && nextPageUrl != requestUrl
-        return MangasPage(mangas, hasNextPage)
+        return MangasPage(
+            mangas = mangas,
+            hasNextPage = document.selectFirst("ul.paginacao li.next a[href]") != null,
+        )
     }
 
     // ===== Busca =====
@@ -81,7 +96,7 @@ class NHentaiNetBr(
             .apply { if (page > 1) addQueryParameter("paged", page.toString()) }
             .build()
         val response = client.get(url)
-        return parseListing(response.asJsoup(), response.request.url.toString())
+        return parseListing(response.asJsoup())
     }
 
     // ===== Detalhes e capítulos via fetchMangaUpdate =====
