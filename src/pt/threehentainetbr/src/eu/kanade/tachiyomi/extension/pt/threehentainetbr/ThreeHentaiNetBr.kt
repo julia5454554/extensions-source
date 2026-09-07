@@ -11,12 +11,9 @@ import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import keiyoushi.annotation.Source
 import keiyoushi.network.rateLimit
 import okhttp3.Headers
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
 import kotlin.time.Duration.Companion.seconds
 
 @Source
@@ -48,9 +45,7 @@ class ThreeHentaiNetBr(
         val document = response.asJsoup()
         val mangas = mutableListOf<SManga>()
 
-        // Seleciona cada item da lista (conforme HTML fornecido)
         document.select("div.lista li").forEach { li ->
-            // O link principal do post (o <a> que envolve a thumb e título)
             val link = li.selectFirst("a[href*='3hentai.net.br']") ?: return@forEach
             val title = link.attr("title").ifBlank {
                 link.selectFirst("span.tituloConteudo")?.text()?.trim() ?: ""
@@ -66,7 +61,6 @@ class ThreeHentaiNetBr(
             }
         }
 
-        // Verifica se há próxima página
         val hasNextPage = document.selectFirst("ul.paginacao li.next a") != null
         return MangasPage(mangas, hasNextPage)
     }
@@ -93,9 +87,8 @@ class ThreeHentaiNetBr(
         val document = response.asJsoup()
         val title = document.selectFirst("h1.post-titulo")?.text()?.trim() ?: "Sem título"
         val cover = document.selectFirst("div.post-capa img")?.attr("abs:src") ?: ""
-        val description = "" // não há descrição aparente, deixe vazio
+        val description = ""
 
-        // Extrai gêneros a partir de categorias e tags
         val genres = mutableListOf<String>()
         document.select("ul.post-itens a[rel='tag'], ul.post-itens a[href*='/category/'], ul.post-itens a[href*='/tag/']").forEach {
             val text = it.text().trim()
@@ -115,15 +108,13 @@ class ThreeHentaiNetBr(
 
     // ==================== CAPÍTULOS (cada post = 1 capítulo) ====================
 
-    override fun chapterListParse(response: Response): List<SChapter> {
-        return listOf(
-            SChapter.create().apply {
-                name = "Capítulo Único"
-                chapter_number = 1f
-                setUrlWithoutDomain(response.request.url.toString())
-            },
-        )
-    }
+    override fun chapterListParse(response: Response): List<SChapter> = listOf(
+        SChapter.create().apply {
+            name = "Capítulo Único"
+            chapter_number = 1f
+            setUrlWithoutDomain(response.request.url.toString())
+        },
+    )
 
     // ==================== PÁGINAS (extrai imagens da galeria) ====================
 
@@ -132,8 +123,6 @@ class ThreeHentaiNetBr(
         val pages = mutableListOf<Page>()
         var index = 0
 
-        // Tenta encontrar todas as imagens dentro da galeria (conforme HTML fornecido)
-        // Pode ser necessário ajustar se as imagens carregarem via JavaScript
         document.select("div.galeriaConteudo img, div.galeriaHtml img, div.post-conteudo img").forEach { img ->
             val src = img.attr("abs:src").ifBlank { img.attr("data-src").ifBlank { img.attr("src") } }
             if (src.isNotBlank() && !src.startsWith("data:image")) {
