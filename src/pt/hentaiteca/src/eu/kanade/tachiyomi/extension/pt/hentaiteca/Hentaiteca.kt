@@ -50,22 +50,6 @@ class Hentaiteca(
             parseMangaItem(item)?.let { mangas.add(it) }
         }
 
-        // Fallback: se não encontrou na estrutura padrão, procura links /manga/ com img
-        if (mangas.isEmpty()) {
-            document.select("a[href*='/manga/']").forEach { link: Element ->
-                val title = link.attr("title").ifBlank { link.text().trim() }
-                val img = link.selectFirst("img")
-                val thumb = img?.attr("data-src")?.ifBlank { img.attr("src") } ?: ""
-                if (title.isNotBlank() && thumb.isNotBlank()) {
-                    SManga.create().apply {
-                        this.title = title
-                        this.thumbnail_url = enhanceThumbnailQuality(thumb)
-                        setUrlWithoutDomain(link.attr("href"))
-                    }.let { mangas.add(it) }
-                }
-            }
-        }
-
         val uniqueMangas = mangas.distinctBy { it.url }
         val hasNextPage = document.selectFirst("a.nextpostslink, a.next") != null
         return MangasPage(uniqueMangas, hasNextPage)
@@ -94,19 +78,9 @@ class Hentaiteca(
         }
     }
 
-    // Melhora a qualidade da thumbnail: tenta 350x476; se não existir, remove o sufixo de dimensão
     private fun enhanceThumbnailQuality(url: String): String {
         val cleaned = url.trim()
-        // Substitui qualquer dimensão -LARGURAxALTURA. por -350x476.
-        val withLarger = cleaned.replace(Regex("-\\d+x\\d+\\."), "-350x476.")
-        // Se a URL original não tinha sufixo de dimensão, retorna a original; caso contrário, tenta sem sufixo
-        return if (withLarger != cleaned) {
-            // Verifica se a versão maior existe? (não podemos verificar aqui, mas assumimos que existe)
-            withLarger
-        } else {
-            // Se não tinha dimensão, retorna original
-            cleaned
-        }
+        return cleaned.replace(Regex("-\\d+x\\d+\\."), "-350x476.")
     }
 
     override fun latestUpdatesRequest(page: Int): Request = popularMangaRequest(page)
@@ -156,29 +130,25 @@ class Hentaiteca(
         val document = response.asJsoup()
         val chapters = mutableListOf<SChapter>()
 
-        // Seletores abrangentes para capítulos
-        val selectors = listOf(
-            "ul.main.version-chap li.wp-manga-chapter a",
-            "div.listing-chapters_wrap a",
-            "li.wp-manga-chapter a",
-            "a[href*='/capitulo-']",
-            "a[href*='/capitulo/']",
-            "a[href*='/chapter-']",
-            "a[href*='/chapter/']",
-        )
+        // Extrai o slug do mangá a partir da URL atual
+        val currentUrl = response.request.url.toString()
+        val mangaSlug = currentUrl.substringAfter("/manga/").substringBefore("/")
 
-        selectors.forEach { selector ->
-            document.select(selector).forEach { link: Element ->
-                val name = link.text().trim()
-                val href = link.attr("href")
-                if (name.isNotBlank() && href.isNotBlank() &&
-                    (href.contains("/capitulo", ignoreCase = true) || href.contains("/chapter", ignoreCase = true))
-                ) {
-                    SChapter.create().apply {
-                        this.name = name
-                        setUrlWithoutDomain(href)
-                    }.let { chapters.add(it) }
-                }
+        // Seleciona apenas os capítulos dentro do container principal
+        val chapterLinks = document.select("div.listing-chapters_wrap ul.main.version-chap li.wp-manga-chapter a")
+
+        // Se não encontrar nesse container, tenta outros seletores específicos
+        val finalLinks = if (chapterLinks.isNotEmpty()) chapterLinks else document.select("ul.main.version-chap li.wp-manga-chapter a")
+
+        finalLinks.forEach { link: Element ->
+            val name = link.text().trim()
+            val href = link.attr("href")
+            // Filtra para garantir que o link pertence ao mesmo mangá (slug)
+            if (href.contains("/manga/$mangaSlug/", ignoreCase = true)) {
+                SChapter.create().apply {
+                    this.name = name
+                    setUrlWithoutDomain(href)
+                }.let { chapters.add(it) }
             }
         }
 
