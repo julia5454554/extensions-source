@@ -50,6 +50,22 @@ class Hentaiteca(
             parseMangaItem(item)?.let { mangas.add(it) }
         }
 
+        // Fallback: se não encontrou na estrutura padrão, procura links /manga/ com img
+        if (mangas.isEmpty()) {
+            document.select("a[href*='/manga/']").forEach { link: Element ->
+                val title = link.attr("title").ifBlank { link.text().trim() }
+                val img = link.selectFirst("img")
+                val thumb = img?.attr("data-src")?.ifBlank { img.attr("src") } ?: ""
+                if (title.isNotBlank() && thumb.isNotBlank()) {
+                    SManga.create().apply {
+                        this.title = title
+                        this.thumbnail_url = enhanceThumbnailQuality(thumb)
+                        setUrlWithoutDomain(link.attr("href"))
+                    }.let { mangas.add(it) }
+                }
+            }
+        }
+
         val uniqueMangas = mangas.distinctBy { it.url }
         val hasNextPage = document.selectFirst("a.nextpostslink, a.next") != null
         return MangasPage(uniqueMangas, hasNextPage)
@@ -78,9 +94,15 @@ class Hentaiteca(
         }
     }
 
+    // Melhora a qualidade da thumbnail: tenta 350x476; se não existir, remove o sufixo de dimensão
     private fun enhanceThumbnailQuality(url: String): String {
         val cleaned = url.trim()
-        return cleaned.replace(Regex("-\\d+x\\d+\\."), "-350x476.")
+        val withLarger = cleaned.replace(Regex("-\\d+x\\d+\\."), "-350x476.")
+        return if (withLarger != cleaned) {
+            withLarger
+        } else {
+            cleaned
+        }
     }
 
     override fun latestUpdatesRequest(page: Int): Request = popularMangaRequest(page)
@@ -128,26 +150,23 @@ class Hentaiteca(
     // ==================== CAPÍTULOS ====================
     override fun chapterListParse(response: Response): List<SChapter> {
         val document = response.asJsoup()
-        val chapters = mutableListOf<SChapter>()
 
-        // Seletores específicos para a lista de capítulos principal
-        val chapterLinks = document.select(
-            "div.listing-chapters_wrap ul.main.version-chap li.wp-manga-chapter a, " +
-                "ul.main.version-chap li.wp-manga-chapter a",
-        )
+        // Seleciona estritamente os itens da lista de capítulos do tema WP Manga / Madara
+        val chapterElements = document.select("ul.main.version-chap li.wp-manga-chapter, div.listing-chapters_wrap li.wp-manga-chapter")
+            .ifEmpty { document.select("li.wp-manga-chapter") }
 
-        chapterLinks.forEach { link: Element ->
+        return chapterElements.mapNotNull { element ->
+            val link = element.selectFirst("a") ?: return@mapNotNull null
+            val href = link.attr("href").ifBlank { return@mapNotNull null }
             val name = link.text().trim()
-            val href = link.attr("href")
-            if (name.isNotBlank() && href.isNotBlank()) {
-                SChapter.create().apply {
-                    this.name = name
-                    setUrlWithoutDomain(href)
-                }.let { chapters.add(it) }
-            }
-        }
 
-        return chapters.distinctBy { it.url }
+            if (name.isBlank()) return@mapNotNull null
+
+            SChapter.create().apply {
+                this.name = name
+                setUrlWithoutDomain(href)
+            }
+        }.distinctBy { it.url }
     }
 
     // ==================== PÁGINAS ====================
