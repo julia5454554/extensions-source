@@ -15,6 +15,8 @@ import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.json.JSONArray
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import kotlin.time.Duration.Companion.seconds
@@ -117,7 +119,7 @@ class ThreeHentaiNetBr(
         val postId = document.selectFirst("a[data-id]")?.attr("data-id")?.toLongOrNull()
 
         val chapterUrl = if (postId != null) {
-            "$baseUrl/?p=$postId" // usa a própria página do mangá para o capítulo
+            "$baseUrl/?p=$postId" // sempre aponta para a página HTML do mangá
         } else {
             response.request.url.toString()
         }
@@ -165,11 +167,20 @@ class ThreeHentaiNetBr(
             }
         }
 
-        // 3ª tentativa: conteúdo renderizado da API (se a resposta for JSON)
+        // 3ª tentativa: extrair postId do HTML e consultar API de mídia
+        val postId = document.selectFirst("a[data-id]")?.attr("data-id")?.toLongOrNull()
+        if (postId != null) {
+            val mediaPages = fetchPagesFromMediaApi(postId)
+            if (mediaPages.isNotEmpty()) {
+                return mediaPages
+            }
+        }
+
+        // 4ª tentativa: se a resposta for JSON da API do post (fallback)
         val body = response.body.string()
         if (body.trim().startsWith("{")) {
             try {
-                val json = org.json.JSONObject(body)
+                val json = JSONObject(body)
                 val contentHtml = json.optString("content.rendered", "")
                 if (contentHtml.isNotBlank()) {
                     val doc = Jsoup.parse(contentHtml)
@@ -188,6 +199,36 @@ class ThreeHentaiNetBr(
         }
 
         return pages
+    }
+
+    // Função para buscar imagens via API de mídia do WordPress
+    private fun fetchPagesFromMediaApi(postId: Long): List<Page> {
+        val url = "$baseUrl/wp-json/wp/v2/media?parent=$postId&per_page=100"
+        val request = GET(url, headersBuilder().set("Referer", "$baseUrl/?p=$postId").build())
+        return try {
+            val response = client.newCall(request).execute()
+            response.use { resp ->
+                if (resp.isSuccessful) {
+                    val jsonArray = JSONArray(resp.body!!.string())
+                    val pages = mutableListOf<Page>()
+                    var index = 0
+                    // Se houver mais de uma imagem, a primeira é a capa e deve ser ignorada
+                    val startIndex = if (jsonArray.length() > 1) 1 else 0
+                    for (i in startIndex until jsonArray.length()) {
+                        val media = jsonArray.getJSONObject(i)
+                        val imageUrl = media.optString("source_url")
+                        if (imageUrl.isNotBlank()) {
+                            pages.add(Page(index++, url = baseUrl, imageUrl = imageUrl))
+                        }
+                    }
+                    pages
+                } else {
+                    emptyList()
+                }
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     // Função auxiliar para extrair URL de imagem considerando lazy loading
