@@ -15,6 +15,7 @@ import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.json.JSONArray
 import org.jsoup.nodes.Element
 import kotlin.time.Duration.Companion.seconds
 
@@ -111,25 +112,53 @@ class ThreeHentaiNetBr(
 
     // ==================== CAPÍTULOS ====================
 
-    override fun chapterListParse(response: Response): List<SChapter> = listOf(
-        SChapter.create().apply {
-            name = "Capítulo Único"
-            chapter_number = 1f
-            setUrlWithoutDomain(response.request.url.toString())
-        },
-    )
+    override fun chapterListParse(response: Response): List<SChapter> {
+        val document = response.asJsoup()
+        // Extrai o ID do post do botão de favorito (possui data-id)
+        val postId = document.selectFirst("a[data-id]")?.attr("data-id")?.toLongOrNull()
+
+        // Se não encontrar, tenta extrair da URL atual (não é o caso, mas como fallback)
+        val chapterUrl = if (postId != null) {
+            "$baseUrl/wp-json/wp/v2/media?parent=$postId&per_page=100"
+        } else {
+            response.request.url.toString()
+        }
+
+        return listOf(
+            SChapter.create().apply {
+                name = "Capítulo Único"
+                chapter_number = 1f
+                setUrlWithoutDomain(chapterUrl)
+            },
+        )
+    }
 
     // ==================== PÁGINAS ====================
 
     override fun pageListParse(response: Response): List<Page> {
-        val document = response.asJsoup()
         val pages = mutableListOf<Page>()
         var index = 0
 
-        document.select("div.galeriaConteudo img, div.galeriaHtml img, div.post-conteudo img").forEach { img: Element ->
-            val src = img.attr("abs:src").ifBlank { img.attr("data-src").ifBlank { img.attr("src") } }
-            if (src.isNotBlank() && !src.startsWith("data:image")) {
-                pages.add(Page(index++, url = baseUrl, imageUrl = src))
+        // Tenta interpretar a resposta como JSON (API de mídia)
+        try {
+            val jsonArray = JSONArray(response.body.string())
+            // Se houver mais de uma imagem, a primeira é a capa e deve ser ignorada
+            val startIndex = if (jsonArray.length() > 1) 1 else 0
+            for (i in startIndex until jsonArray.length()) {
+                val media = jsonArray.getJSONObject(i)
+                val imageUrl = media.optString("source_url")
+                if (imageUrl.isNotBlank()) {
+                    pages.add(Page(index++, url = baseUrl, imageUrl = imageUrl))
+                }
+            }
+        } catch (e: Exception) {
+            // Fallback: extrair imagens do HTML, caso a API não funcione
+            val document = response.asJsoup()
+            document.select("div.galeriaConteudo img, div.galeriaHtml img, div.post-conteudo img").forEach { img: Element ->
+                val src = img.attr("abs:src").ifBlank { img.attr("data-src").ifBlank { img.attr("src") } }
+                if (src.isNotBlank() && !src.startsWith("data:image")) {
+                    pages.add(Page(index++, url = baseUrl, imageUrl = src))
+                }
             }
         }
 
