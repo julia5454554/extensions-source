@@ -130,21 +130,16 @@ class Hentaiteca(
         val document = response.asJsoup()
         val chapters = mutableListOf<SChapter>()
 
-        // Extrai o slug do mangá a partir da URL atual
-        val currentUrl = response.request.url.toString()
-        val mangaSlug = currentUrl.substringAfter("/manga/").substringBefore("/")
+        // Seletores específicos para a lista de capítulos principal
+        val chapterLinks = document.select(
+            "div.listing-chapters_wrap ul.main.version-chap li.wp-manga-chapter a, " +
+                "ul.main.version-chap li.wp-manga-chapter a",
+        )
 
-        // Seleciona apenas os capítulos dentro do container principal
-        val chapterLinks = document.select("div.listing-chapters_wrap ul.main.version-chap li.wp-manga-chapter a")
-
-        // Se não encontrar nesse container, tenta outros seletores específicos
-        val finalLinks = if (chapterLinks.isNotEmpty()) chapterLinks else document.select("ul.main.version-chap li.wp-manga-chapter a")
-
-        finalLinks.forEach { link: Element ->
+        chapterLinks.forEach { link: Element ->
             val name = link.text().trim()
             val href = link.attr("href")
-            // Filtra para garantir que o link pertence ao mesmo mangá (slug)
-            if (href.contains("/manga/$mangaSlug/", ignoreCase = true)) {
+            if (name.isNotBlank() && href.isNotBlank()) {
                 SChapter.create().apply {
                     this.name = name
                     setUrlWithoutDomain(href)
