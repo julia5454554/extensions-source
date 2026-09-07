@@ -33,11 +33,6 @@ class ThreeHentaiNetBr(
         .rateLimit(2, 1.seconds)
         .build()
 
-    // Client separado para requisições de imagens (sem rate limit severo)
-    private val imageClient: OkHttpClient = network.client.newBuilder()
-        .rateLimit(5, 1.seconds)
-        .build()
-
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
@@ -144,73 +139,55 @@ class ThreeHentaiNetBr(
 
         val document = response.asJsoup()
 
-        // Tenta extrair o ID do post e o total de páginas da galeria
-        val postId = document.selectFirst("a[data-id]")?.attr("data-id")?.toLongOrNull()
-        val totalPages = document.selectFirst(".slider-total")?.text()?.trim()?.toIntOrNull()
-
-        if (postId != null && totalPages != null && totalPages > 0) {
-            // Usa a galeria AJAX para obter cada imagem
-            for (i in 1..totalPages) {
-                val imgUrl = fetchImageUrl(postId, i)
-                if (imgUrl != null) {
-                    pages.add(Page(index++, url = baseUrl, imageUrl = imgUrl))
+        // 1ª tentativa: lista estática ul.post-fotos
+        val staticImages = document.select("ul.post-fotos img")
+        if (staticImages.isNotEmpty()) {
+            staticImages.forEach { img: Element ->
+                val src = extractImageUrl(img)
+                if (src.isNotBlank()) {
+                    pages.add(Page(index++, url = baseUrl, imageUrl = src))
                 }
             }
-        } else {
-            // Fallback: tenta extrair imagens diretamente do HTML (API ou scraping)
-            // Tenta primeiro API do post (se a resposta for JSON)
-            val body = response.body.string()
-            if (body.trim().startsWith("{")) {
-                try {
-                    val json = org.json.JSONObject(body)
-                    val contentHtml = json.optString("content.rendered", "")
-                    if (contentHtml.isNotBlank()) {
-                        val doc = Jsoup.parse(contentHtml)
-                        val images = doc.select("img")
-                        val startIdx = if (images.size > 1) 1 else 0
-                        for (i in startIdx until images.size) {
-                            val src = extractImageUrl(images[i])
-                            if (src.isNotBlank()) {
-                                pages.add(Page(index++, url = baseUrl, imageUrl = src))
-                            }
+            return pages
+        }
+
+        // 2ª tentativa: outras áreas estáticas
+        val otherImages = document.select("div.galeriaConteudo img, div.galeriaHtml img, div.post-conteudo img")
+        if (otherImages.isNotEmpty()) {
+            otherImages.forEach { img: Element ->
+                val src = extractImageUrl(img)
+                if (src.isNotBlank()) {
+                    pages.add(Page(index++, url = baseUrl, imageUrl = src))
+                }
+            }
+            if (pages.isNotEmpty()) {
+                return pages
+            }
+        }
+
+        // 3ª tentativa: conteúdo renderizado da API (se a resposta for JSON)
+        val body = response.body.string()
+        if (body.trim().startsWith("{")) {
+            try {
+                val json = org.json.JSONObject(body)
+                val contentHtml = json.optString("content.rendered", "")
+                if (contentHtml.isNotBlank()) {
+                    val doc = Jsoup.parse(contentHtml)
+                    val images = doc.select("img")
+                    val startIdx = if (images.size > 1) 1 else 0
+                    for (i in startIdx until images.size) {
+                        val src = extractImageUrl(images[i])
+                        if (src.isNotBlank()) {
+                            pages.add(Page(index++, url = baseUrl, imageUrl = src))
                         }
                     }
-                } catch (e: Exception) {
-                    // ignora
                 }
-            } else {
-                // Scraping direto
-                document.select("div.galeriaConteudo img, div.galeriaHtml img, div.post-conteudo img").forEach { img: Element ->
-                    val src = extractImageUrl(img)
-                    if (src.isNotBlank()) {
-                        pages.add(Page(index++, url = baseUrl, imageUrl = src))
-                    }
-                }
+            } catch (e: Exception) {
+                // ignora
             }
         }
 
         return pages
-    }
-
-    // Função para buscar a URL da imagem de uma página específica da galeria AJAX
-    private fun fetchImageUrl(postId: Long, imgNumber: Int): String? {
-        val url = "$baseUrl/galery/?id=$postId&img=$imgNumber"
-        val request = GET(url, headersBuilder().set("Referer", "$baseUrl/?p=$postId").build())
-        return try {
-            val response = imageClient.newCall(request).execute()
-            response.use { resp ->
-                if (resp.isSuccessful) {
-                    val doc = Jsoup.parse(resp.body!!.string())
-                    // Extrai a URL da imagem (a primeira tag img dentro da galeria)
-                    val img = doc.selectFirst("div.galeria-foto img, img")
-                    img?.attr("src")?.let { if (it.startsWith("http")) it else baseUrl + it }
-                } else {
-                    null
-                }
-            }
-        } catch (e: Exception) {
-            null
-        }
     }
 
     // Função auxiliar para extrair URL de imagem considerando lazy loading
