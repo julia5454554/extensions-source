@@ -7,7 +7,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
-import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import keiyoushi.annotation.Source
 import keiyoushi.network.rateLimit
 import okhttp3.Headers
@@ -15,17 +15,15 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import org.json.JSONArray
-import org.json.JSONObject
-import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import kotlin.time.Duration.Companion.seconds
 
 @Source
 class ThreeHentaiNetBr(
     override val lang: String = "pt-BR",
-    override val id: Long = 2024060001L, // Troque por um ID único na publicação
-) : HttpSource() {
+    override val id: Long = 2024060001L, // Troque por um ID único
+) : ParsedHttpSource() {
 
     override val name = "3Hentai.net.br"
     override val baseUrl = "https://3hentai.net.br"
@@ -39,139 +37,74 @@ class ThreeHentaiNetBr(
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
 
-    // ==================== EXTRAÇÃO DE URL DE IMAGEM ====================
-    private fun extractImageUrl(element: Element): String {
-        val raw = element.attr("data-lazy-src")
-            .ifEmpty { element.attr("data-src") }
-            .ifEmpty { element.attr("abs:src") }
-            .ifEmpty { element.attr("src") }
+    // ==================== LISTAGEM (scraping) ====================
 
-        if (raw.isEmpty()) return ""
-
-        return if (raw.startsWith("http://") || raw.startsWith("https://")) {
-            raw
-        } else {
-            baseUrl + raw.removePrefix("/")
-        }
-    }
-
-    // ==================== LISTAGEM (API REST WordPress) ====================
     override fun popularMangaRequest(page: Int): Request {
-        val url = "$baseUrl/wp-json/wp/v2/posts".toHttpUrl().newBuilder()
-            .addQueryParameter("per_page", "20")
-            .addQueryParameter("page", page.toString())
-            .build()
+        val url = if (page == 1) baseUrl else "$baseUrl/page/$page/"
         return GET(url, headers)
     }
 
     override fun popularMangaParse(response: Response): MangasPage {
-        val jsonArray = JSONArray(response.body.string())
+        val document = response.asJsoup()
         val mangas = mutableListOf<SManga>()
 
-        // Palavras-chave comuns em posts patrocinados/anúncios para filtrar
-        val adKeywords = listOf(
-            "download", "grátis", "acesse", "clique", "patrocinado",
-            "publicidade", "site", "anúncio", "ads", "vazou", "torrent",
-        )
-
-        for (i in 0 until jsonArray.length()) {
-            val post = jsonArray.getJSONObject(i)
-            val id = post.getInt("id")
-            val title = Jsoup.parse(post.getJSONObject("title").getString("rendered")).text()
-            val link = post.getString("link")
-
-            // Garante que o link pertence ao domínio
-            if (!link.contains("3hentai.net.br")) continue
-
-            // Filtra posts que parecem anúncios
-            val lowerTitle = title.lowercase()
-            if (adKeywords.any { lowerTitle.contains(it) }) continue
-
-            // Obtém o HTML do conteúdo para extrair imagens e validar
-            val contentHtml = post.getJSONObject("content").getString("rendered")
-            val doc = Jsoup.parse(contentHtml)
-            val images = doc.select("img")
-
-            // Pula se houver menos de 2 imagens (provável anúncio ou post vazio)
-            if (images.size < 2) continue
-
-            val apiUrl = "/wp-json/wp/v2/posts/$id"
-            val thumb = post.optString("jetpack_featured_media_url", "").ifEmpty {
-                images.firstOrNull()?.let { extractImageUrl(it) } ?: ""
+        // Seleciona cada item da lista (conforme HTML fornecido)
+        document.select("div.lista li").forEach { li ->
+            // O link principal do post (o <a> que envolve a thumb e título)
+            val link = li.selectFirst("a[href*='3hentai.net.br']") ?: return@forEach
+            val title = link.attr("title").ifBlank {
+                link.selectFirst("span.tituloConteudo")?.text()?.trim() ?: ""
             }
+            val thumb = link.selectFirst("img")?.attr("abs:src") ?: ""
 
-            SManga.create().apply {
-                this.title = title
-                this.thumbnail_url = thumb
-                setUrlWithoutDomain(apiUrl)
-            }.let { mangas.add(it) }
+            if (title.isNotBlank() && thumb.isNotBlank()) {
+                SManga.create().apply {
+                    this.title = title
+                    this.thumbnail_url = thumb
+                    setUrlWithoutDomain(link.attr("href"))
+                }.let { mangas.add(it) }
+            }
         }
 
-        // Paginação via cabeçalhos HTTP do WordPress
-        val totalPages = response.header("X-WP-TotalPages")?.toIntOrNull() ?: 1
-        val currentPage = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
-        val hasNextPage = currentPage < totalPages
-
+        // Verifica se há próxima página
+        val hasNextPage = document.selectFirst("ul.paginacao li.next a") != null
         return MangasPage(mangas, hasNextPage)
     }
 
     override fun latestUpdatesRequest(page: Int): Request = popularMangaRequest(page)
     override fun latestUpdatesParse(response: Response): MangasPage = popularMangaParse(response)
 
-    // ==================== BUSCA (API REST WordPress) ====================
+    // ==================== BUSCA (scraping) ====================
+
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val url = "$baseUrl/wp-json/wp/v2/posts".toHttpUrl().newBuilder()
-            .addQueryParameter("search", query)
-            .addQueryParameter("per_page", "20")
-            .addQueryParameter("page", page.toString())
-            .build()
+        val url = if (page == 1) {
+            "$baseUrl/?s=$query"
+        } else {
+            "$baseUrl/page/$page/?s=$query"
+        }
         return GET(url, headers)
     }
 
     override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
 
-    // ==================== DETALHES (API REST WordPress) ====================
-    override fun mangaDetailsRequest(manga: SManga): Request {
-        val url = manga.url.toHttpUrl().newBuilder()
-            .addQueryParameter("_embed", "1") // Inclui taxonomias (categorias, tags, custom)
-            .build()
-        return GET(url, headers)
-    }
+    // ==================== DETALHES (scraping) ====================
 
     override fun mangaDetailsParse(response: Response): SManga {
-        val post = JSONObject(response.body.string())
-        val title = Jsoup.parse(post.getJSONObject("title").getString("rendered")).text()
-        val thumb = post.optString("jetpack_featured_media_url", "").ifEmpty {
-            val content = post.getJSONObject("content").getString("rendered")
-            val doc = Jsoup.parse(content)
-            doc.selectFirst("img")?.let { extractImageUrl(it) } ?: ""
-        }
-        val description = Jsoup.parse(post.getJSONObject("excerpt").getString("rendered")).text().trim()
+        val document = response.asJsoup()
+        val title = document.selectFirst("h1.post-titulo")?.text()?.trim() ?: "Sem título"
+        val cover = document.selectFirst("div.post-capa img")?.attr("abs:src") ?: ""
+        val description = "" // não há descrição aparente, deixe vazio
 
-        // Extrai gêneros (categorias, tags e taxonomias customizadas) do _embedded
+        // Extrai gêneros a partir de categorias e tags
         val genres = mutableListOf<String>()
-        val embedded = post.optJSONObject("_embedded")
-        if (embedded != null) {
-            val terms = embedded.optJSONArray("wp:term")
-            if (terms != null) {
-                for (i in 0 until terms.length()) {
-                    val termArray = terms.optJSONArray(i)
-                    if (termArray != null) {
-                        for (j in 0 until termArray.length()) {
-                            val term = termArray.optJSONObject(j)
-                            val name = term?.optString("name")
-                            if (!name.isNullOrBlank()) {
-                                genres.add(name)
-                            }
-                        }
-                    }
-                }
-            }
+        document.select("ul.post-itens a[rel='tag'], ul.post-itens a[href*='/category/'], ul.post-itens a[href*='/tag/']").forEach {
+            val text = it.text().trim()
+            if (text.isNotBlank()) genres.add(text)
         }
 
         return SManga.create().apply {
             this.title = title
-            this.thumbnail_url = thumb
+            this.thumbnail_url = cover
             this.description = description
             this.genre = genres.joinToString(", ")
             this.status = SManga.COMPLETED
@@ -181,30 +114,29 @@ class ThreeHentaiNetBr(
     }
 
     // ==================== CAPÍTULOS (cada post = 1 capítulo) ====================
+
     override fun chapterListParse(response: Response): List<SChapter> {
-        val basePath = response.request.url.toString().removePrefix(baseUrl)
         return listOf(
             SChapter.create().apply {
                 name = "Capítulo Único"
                 chapter_number = 1f
-                setUrlWithoutDomain(basePath)
+                setUrlWithoutDomain(response.request.url.toString())
             },
         )
     }
 
-    // ==================== PÁGINAS (extrai imagens do conteúdo) ====================
-    override fun pageListParse(response: Response): List<Page> {
-        val post = JSONObject(response.body.string())
-        val contentHtml = post.getJSONObject("content").getString("rendered")
-        val doc = Jsoup.parse(contentHtml)
+    // ==================== PÁGINAS (extrai imagens da galeria) ====================
 
-        val images = doc.select("img")
+    override fun pageListParse(response: Response): List<Page> {
+        val document = response.asJsoup()
         val pages = mutableListOf<Page>()
         var index = 0
 
-        images.forEach { img ->
-            val src = extractImageUrl(img)
-            if (src.isNotEmpty() && !src.startsWith("data:image")) {
+        // Tenta encontrar todas as imagens dentro da galeria (conforme HTML fornecido)
+        // Pode ser necessário ajustar se as imagens carregarem via JavaScript
+        document.select("div.galeriaConteudo img, div.galeriaHtml img, div.post-conteudo img").forEach { img ->
+            val src = img.attr("abs:src").ifBlank { img.attr("data-src").ifBlank { img.attr("src") } }
+            if (src.isNotBlank() && !src.startsWith("data:image")) {
                 pages.add(Page(index++, url = baseUrl, imageUrl = src))
             }
         }
