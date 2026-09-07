@@ -8,12 +8,14 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.annotation.Source
 import keiyoushi.network.rateLimit
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.nodes.Element
 import kotlin.time.Duration.Companion.seconds
 
 @Source
@@ -45,7 +47,7 @@ class ThreeHentaiNetBr(
         val document = response.asJsoup()
         val mangas = mutableListOf<SManga>()
 
-        document.select("div.lista li").forEach { li ->
+        document.select("div.lista li").forEach { li: Element ->
             val link = li.selectFirst("a[href*='3hentai.net.br']") ?: return@forEach
             val title = link.attr("title").ifBlank {
                 link.selectFirst("span.tituloConteudo")?.text()?.trim() ?: ""
@@ -90,8 +92,8 @@ class ThreeHentaiNetBr(
         val description = ""
 
         val genres = mutableListOf<String>()
-        document.select("ul.post-itens a[rel='tag'], ul.post-itens a[href*='/category/'], ul.post-itens a[href*='/tag/']").forEach {
-            val text = it.text().trim()
+        document.select("ul.post-itens a[rel='tag'], ul.post-itens a[href*='/category/'], ul.post-itens a[href*='/tag/']").forEach { element: Element ->
+            val text = element.text().trim()
             if (text.isNotBlank()) genres.add(text)
         }
 
@@ -123,7 +125,7 @@ class ThreeHentaiNetBr(
         val pages = mutableListOf<Page>()
         var index = 0
 
-        document.select("div.galeriaConteudo img, div.galeriaHtml img, div.post-conteudo img").forEach { img ->
+        document.select("div.galeriaConteudo img, div.galeriaHtml img, div.post-conteudo img").forEach { img: Element ->
             val src = img.attr("abs:src").ifBlank { img.attr("data-src").ifBlank { img.attr("src") } }
             if (src.isNotBlank() && !src.startsWith("data:image")) {
                 pages.add(Page(index++, url = baseUrl, imageUrl = src))
