@@ -7,7 +7,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
-import eu.kanade.tachiyomi.source.online.ParsedHttpSource
+import eu.kanade.tachiyomi.source.online.HttpSource
 import keiyoushi.annotation.Source
 import keiyoushi.network.rateLimit
 import okhttp3.Headers
@@ -20,7 +20,7 @@ import kotlin.time.Duration.Companion.seconds
 class ThreeHentaiNetBr(
     override val lang: String = "pt-BR",
     override val id: Long = 2024060001L, // Troque por um ID único
-) : ParsedHttpSource() {
+) : HttpSource() {
 
     override val name = "3Hentai.net.br"
     override val baseUrl = "https://3hentai.net.br"
@@ -34,7 +34,7 @@ class ThreeHentaiNetBr(
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
 
-    // ==================== LISTAGEM (scraping) ====================
+    // ==================== LISTAGEM ====================
 
     override fun popularMangaRequest(page: Int): Request {
         val url = if (page == 1) baseUrl else "$baseUrl/page/$page/"
@@ -68,7 +68,7 @@ class ThreeHentaiNetBr(
     override fun latestUpdatesRequest(page: Int): Request = popularMangaRequest(page)
     override fun latestUpdatesParse(response: Response): MangasPage = popularMangaParse(response)
 
-    // ==================== BUSCA (scraping) ====================
+    // ==================== BUSCA ====================
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val url = if (page == 1) {
@@ -81,7 +81,7 @@ class ThreeHentaiNetBr(
 
     override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
 
-    // ==================== DETALHES (scraping) ====================
+    // ==================== DETALHES ====================
 
     override fun mangaDetailsParse(response: Response): SManga {
         val document = response.asJsoup()
@@ -106,7 +106,7 @@ class ThreeHentaiNetBr(
         }
     }
 
-    // ==================== CAPÍTULOS (cada post = 1 capítulo) ====================
+    // ==================== CAPÍTULOS ====================
 
     override fun chapterListParse(response: Response): List<SChapter> = listOf(
         SChapter.create().apply {
@@ -116,7 +116,7 @@ class ThreeHentaiNetBr(
         },
     )
 
-    // ==================== PÁGINAS (extrai imagens da galeria) ====================
+    // ==================== PÁGINAS ====================
 
     override fun pageListParse(response: Response): List<Page> {
         val document = response.asJsoup()
