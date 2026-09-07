@@ -26,10 +26,10 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build only the 3HentaiNetBr extension
-        run: ./gradlew :src:eu:kanade:tachiyomi:extension:pt:threehentainetbr:assembleRelease
+        run: ./gradlew :src:pt:threehentainetbr:assembleRelease
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: threehentainetbr-extension-apk
-          path: src/eu/kanade/tachiyomi/extension/pt/threehentainetbr/build/outputs/apk/release/*.apk
+          path: src/pt/threehentainetbr/build/outputs/apk/release/*.apk
