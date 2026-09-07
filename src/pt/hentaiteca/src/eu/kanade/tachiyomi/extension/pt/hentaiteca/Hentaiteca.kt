@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.extension.pt.hentaiteca
 
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -50,7 +51,6 @@ class Hentaiteca(
             parseMangaItem(item)?.let { mangas.add(it) }
         }
 
-        // Fallback: se não encontrou na estrutura padrão, procura links /manga/ com img
         if (mangas.isEmpty()) {
             document.select("a[href*='/manga/']").forEach { link: Element ->
                 val title = link.attr("title").ifBlank { link.text().trim() }
@@ -94,7 +94,6 @@ class Hentaiteca(
         }
     }
 
-    // Melhora a qualidade da thumbnail: tenta 350x476; se não existir, remove o sufixo de dimensão
     private fun enhanceThumbnailQuality(url: String): String {
         val cleaned = url.trim()
         val withLarger = cleaned.replace(Regex("-\\d+x\\d+\\."), "-350x476.")
@@ -148,25 +147,36 @@ class Hentaiteca(
     }
 
     // ==================== CAPÍTULOS ====================
+    // Faz a requisição POST para a rota do endpoint AJAX do Madara
+    override fun chapterListRequest(manga: SManga): Request {
+        val url = if (manga.url.startsWith("http")) manga.url else "$baseUrl${manga.url}"
+        val cleanUrl = if (url.endsWith("/")) url else "$url/"
+        return POST("${cleanUrl}ajax/chapters/", headers)
+    }
+
     override fun chapterListParse(response: Response): List<SChapter> {
         val document = response.asJsoup()
+        val chapters = mutableListOf<SChapter>()
 
-        // Seleciona estritamente os itens da lista de capítulos do tema WP Manga / Madara
-        val chapterElements = document.select("ul.main.version-chap li.wp-manga-chapter, div.listing-chapters_wrap li.wp-manga-chapter")
-            .ifEmpty { document.select("li.wp-manga-chapter") }
+        val elements = document.select("li.wp-manga-chapter")
+            .ifEmpty { document.select("ul.main li") }
 
-        return chapterElements.mapNotNull { element ->
-            val link = element.selectFirst("a") ?: return@mapNotNull null
-            val href = link.attr("href").ifBlank { return@mapNotNull null }
+        for (element in elements) {
+            val link = element.selectFirst("a") ?: continue
+            val href = link.attr("href").ifBlank { continue }
             val name = link.text().trim()
 
-            if (name.isBlank()) return@mapNotNull null
+            if (name.isBlank()) continue
 
-            SChapter.create().apply {
-                this.name = name
-                setUrlWithoutDomain(href)
-            }
-        }.distinctBy { it.url }
+            chapters.add(
+                SChapter.create().apply {
+                    this.name = name
+                    setUrlWithoutDomain(href)
+                }
+            )
+        }
+
+        return chapters.distinctBy { it.url }
     }
 
     // ==================== PÁGINAS ====================
