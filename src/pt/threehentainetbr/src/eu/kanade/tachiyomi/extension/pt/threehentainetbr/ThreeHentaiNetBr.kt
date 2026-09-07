@@ -12,10 +12,11 @@ import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.annotation.Source
 import keiyoushi.network.rateLimit
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import org.json.JSONArray
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import kotlin.time.Duration.Companion.seconds
 
@@ -31,6 +32,11 @@ class ThreeHentaiNetBr(
 
     override val client: OkHttpClient = network.client.newBuilder()
         .rateLimit(2, 1.seconds)
+        .build()
+
+    // Client separado para requisições de imagens (sem rate limit severo)
+    private val imageClient: OkHttpClient = network.client.newBuilder()
+        .rateLimit(5, 1.seconds)
         .build()
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
@@ -49,7 +55,6 @@ class ThreeHentaiNetBr(
         val mangas = mutableListOf<SManga>()
 
         document.select("div.lista li").forEach { li: Element ->
-            // Seleciona o <a> que contém a imagem (link do mangá, não o da paródia)
             val link = li.selectFirst("a[href*='3hentai.net.br']:has(img)") ?: return@forEach
             val title = link.attr("title").ifBlank {
                 link.selectFirst("span.tituloConteudo")?.text()?.trim() ?: ""
@@ -114,12 +119,11 @@ class ThreeHentaiNetBr(
 
     override fun chapterListParse(response: Response): List<SChapter> {
         val document = response.asJsoup()
-        // Extrai o ID do post do botão de favorito (possui data-id)
+        // Extrai o ID do post do botão de favorito (atributo data-id)
         val postId = document.selectFirst("a[data-id]")?.attr("data-id")?.toLongOrNull()
 
-        // Se não encontrar, tenta extrair da URL atual (não é o caso, mas como fallback)
         val chapterUrl = if (postId != null) {
-            "$baseUrl/wp-json/wp/v2/media?parent=$postId&per_page=100"
+            "$baseUrl/?p=$postId" // usa a própria página do mangá para o capítulo
         } else {
             response.request.url.toString()
         }
@@ -139,30 +143,89 @@ class ThreeHentaiNetBr(
         val pages = mutableListOf<Page>()
         var index = 0
 
-        // Tenta interpretar a resposta como JSON (API de mídia)
-        try {
-            val jsonArray = JSONArray(response.body.string())
-            // Se houver mais de uma imagem, a primeira é a capa e deve ser ignorada
-            val startIndex = if (jsonArray.length() > 1) 1 else 0
-            for (i in startIndex until jsonArray.length()) {
-                val media = jsonArray.getJSONObject(i)
-                val imageUrl = media.optString("source_url")
-                if (imageUrl.isNotBlank()) {
-                    pages.add(Page(index++, url = baseUrl, imageUrl = imageUrl))
+        val document = response.asJsoup()
+
+        // Tenta extrair o ID do post e o total de páginas da galeria
+        val postId = document.selectFirst("a[data-id]")?.attr("data-id")?.toLongOrNull()
+        val totalPages = document.selectFirst(".slider-total")?.text()?.trim()?.toIntOrNull()
+
+        if (postId != null && totalPages != null && totalPages > 0) {
+            // Usa a galeria AJAX para obter cada imagem
+            for (i in 1..totalPages) {
+                val imgUrl = fetchImageUrl(postId, i)
+                if (imgUrl != null) {
+                    pages.add(Page(index++, url = baseUrl, imageUrl = imgUrl))
                 }
             }
-        } catch (e: Exception) {
-            // Fallback: extrair imagens do HTML, caso a API não funcione
-            val document = response.asJsoup()
-            document.select("div.galeriaConteudo img, div.galeriaHtml img, div.post-conteudo img").forEach { img: Element ->
-                val src = img.attr("abs:src").ifBlank { img.attr("data-src").ifBlank { img.attr("src") } }
-                if (src.isNotBlank() && !src.startsWith("data:image")) {
-                    pages.add(Page(index++, url = baseUrl, imageUrl = src))
+        } else {
+            // Fallback: tenta extrair imagens diretamente do HTML (API ou scraping)
+            // Tenta primeiro API do post (se a resposta for JSON)
+            val body = response.body.string()
+            if (body.trim().startsWith("{")) {
+                try {
+                    val json = org.json.JSONObject(body)
+                    val contentHtml = json.optString("content.rendered", "")
+                    if (contentHtml.isNotBlank()) {
+                        val doc = Jsoup.parse(contentHtml)
+                        val images = doc.select("img")
+                        val startIdx = if (images.size > 1) 1 else 0
+                        for (i in startIdx until images.size) {
+                            val src = extractImageUrl(images[i])
+                            if (src.isNotBlank()) {
+                                pages.add(Page(index++, url = baseUrl, imageUrl = src))
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    // ignora
+                }
+            } else {
+                // Scraping direto
+                document.select("div.galeriaConteudo img, div.galeriaHtml img, div.post-conteudo img").forEach { img: Element ->
+                    val src = extractImageUrl(img)
+                    if (src.isNotBlank()) {
+                        pages.add(Page(index++, url = baseUrl, imageUrl = src))
+                    }
                 }
             }
         }
 
         return pages
+    }
+
+    // Função para buscar a URL da imagem de uma página específica da galeria AJAX
+    private fun fetchImageUrl(postId: Long, imgNumber: Int): String? {
+        val url = "$baseUrl/galery/?id=$postId&img=$imgNumber"
+        val request = GET(url, headersBuilder().set("Referer", "$baseUrl/?p=$postId").build())
+        return try {
+            val response = imageClient.newCall(request).execute()
+            response.use { resp ->
+                if (resp.isSuccessful) {
+                    val doc = Jsoup.parse(resp.body!!.string())
+                    // Extrai a URL da imagem (a primeira tag img dentro da galeria)
+                    val img = doc.selectFirst("div.galeria-foto img, img")
+                    img?.attr("src")?.let { if (it.startsWith("http")) it else baseUrl + it }
+                } else {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // Função auxiliar para extrair URL de imagem considerando lazy loading
+    private fun extractImageUrl(img: Element): String {
+        val raw = img.attr("data-lazy-src")
+            .ifBlank { img.attr("data-src") }
+            .ifBlank { img.attr("abs:src") }
+            .ifBlank { img.attr("src") }
+        if (raw.isEmpty()) return ""
+        return if (raw.startsWith("http://") || raw.startsWith("https://")) {
+            raw
+        } else {
+            baseUrl + raw.removePrefix("/")
+        }
     }
 
     override fun imageUrlParse(response: Response): String = throw UnsupportedOperationException()
