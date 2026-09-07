@@ -48,7 +48,8 @@ class ThreeHentaiNetBr(
         val mangas = mutableListOf<SManga>()
 
         document.select("div.lista li").forEach { li: Element ->
-            val link = li.selectFirst("a[href*='3hentai.net.br']") ?: return@forEach
+            // Seleciona o <a> que contém a imagem (link do mangá, não o da paródia)
+            val link = li.selectFirst("a[href*='3hentai.net.br']:has(img)") ?: return@forEach
             val title = link.attr("title").ifBlank {
                 link.selectFirst("span.tituloConteudo")?.text()?.trim() ?: ""
             }
