@@ -24,7 +24,7 @@ import kotlin.time.Duration.Companion.seconds
 @Source
 class ThreeHentaiNetBr(
     override val lang: String = "pt-BR",
-    override val id: Long = 2024060001L, // ⚠️ Troque por um ID único na publicação
+    override val id: Long = 2024060001L, // Troque por um ID único na publicação
 ) : HttpSource() {
 
     override val name = "3Hentai.net.br"
@@ -71,7 +71,7 @@ class ThreeHentaiNetBr(
         // Palavras-chave comuns em posts patrocinados/anúncios para filtrar
         val adKeywords = listOf(
             "download", "grátis", "acesse", "clique", "patrocinado",
-            "publicidade", "site", "anúncio", "ads", "vazou", "torrent"
+            "publicidade", "site", "anúncio", "ads", "vazou", "torrent",
         )
 
         for (i in 0 until jsonArray.length()) {
@@ -188,7 +188,7 @@ class ThreeHentaiNetBr(
                 name = "Capítulo Único"
                 chapter_number = 1f
                 setUrlWithoutDomain(basePath)
-            }
+            },
         )
     }
 
