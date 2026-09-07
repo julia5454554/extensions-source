@@ -147,7 +147,6 @@ class Hentaiteca(
     }
 
     // ==================== CAPÍTULOS ====================
-    // Faz a requisição POST para a rota do endpoint AJAX do Madara
     override fun chapterListRequest(manga: SManga): Request {
         val url = if (manga.url.startsWith("http")) manga.url else "$baseUrl${manga.url}"
         val cleanUrl = if (url.endsWith("/")) url else "$url/"
@@ -172,7 +171,7 @@ class Hentaiteca(
                 SChapter.create().apply {
                     this.name = name
                     setUrlWithoutDomain(href)
-                }
+                },
             )
         }
 
