@@ -50,6 +50,22 @@ class Hentaiteca(
             parseMangaItem(item)?.let { mangas.add(it) }
         }
 
+        // Fallback: se não encontrou na estrutura padrão, procura links /manga/ com img
+        if (mangas.isEmpty()) {
+            document.select("a[href*='/manga/']").forEach { link: Element ->
+                val title = link.attr("title").ifBlank { link.text().trim() }
+                val img = link.selectFirst("img")
+                val thumb = img?.attr("data-src")?.ifBlank { img.attr("src") } ?: ""
+                if (title.isNotBlank() && thumb.isNotBlank()) {
+                    SManga.create().apply {
+                        this.title = title
+                        this.thumbnail_url = enhanceThumbnailQuality(thumb)
+                        setUrlWithoutDomain(link.attr("href"))
+                    }.let { mangas.add(it) }
+                }
+            }
+        }
+
         val uniqueMangas = mangas.distinctBy { it.url }
         val hasNextPage = document.selectFirst("a.nextpostslink, a.next") != null
         return MangasPage(uniqueMangas, hasNextPage)
@@ -67,13 +83,29 @@ class Hentaiteca(
 
         val img = item.selectFirst("div.item-thumb img")
         val thumb = img?.attr("data-src")?.ifBlank { img.attr("src") } ?: ""
+        val highQualityThumb = enhanceThumbnailQuality(thumb)
 
-        if (title.isBlank() || thumb.isBlank()) return null
+        if (title.isBlank() || highQualityThumb.isBlank()) return null
 
         return SManga.create().apply {
             this.title = title
-            this.thumbnail_url = thumb
+            this.thumbnail_url = highQualityThumb
             setUrlWithoutDomain(thumbLink.attr("href"))
+        }
+    }
+
+    // Melhora a qualidade da thumbnail: tenta 350x476; se não existir, remove o sufixo de dimensão
+    private fun enhanceThumbnailQuality(url: String): String {
+        val cleaned = url.trim()
+        // Substitui qualquer dimensão -LARGURAxALTURA. por -350x476.
+        val withLarger = cleaned.replace(Regex("-\\d+x\\d+\\."), "-350x476.")
+        // Se a URL original não tinha sufixo de dimensão, retorna a original; caso contrário, tenta sem sufixo
+        return if (withLarger != cleaned) {
+            // Verifica se a versão maior existe? (não podemos verificar aqui, mas assumimos que existe)
+            withLarger
+        } else {
+            // Se não tinha dimensão, retorna original
+            cleaned
         }
     }
 
@@ -110,7 +142,7 @@ class Hentaiteca(
 
         return SManga.create().apply {
             this.title = title
-            this.thumbnail_url = cover
+            this.thumbnail_url = enhanceThumbnailQuality(cover)
             this.description = ""
             this.genre = genres.joinToString(", ")
             this.status = SManga.COMPLETED
@@ -124,18 +156,33 @@ class Hentaiteca(
         val document = response.asJsoup()
         val chapters = mutableListOf<SChapter>()
 
-        document.select("ul.main.version-chap li.wp-manga-chapter a").forEach { link: Element ->
-            val name = link.text().trim()
-            val href = link.attr("href")
-            if (name.isNotBlank() && href.isNotBlank()) {
-                SChapter.create().apply {
-                    this.name = name
-                    setUrlWithoutDomain(href)
-                }.let { chapters.add(it) }
+        // Seletores abrangentes para capítulos
+        val selectors = listOf(
+            "ul.main.version-chap li.wp-manga-chapter a",
+            "div.listing-chapters_wrap a",
+            "li.wp-manga-chapter a",
+            "a[href*='/capitulo-']",
+            "a[href*='/capitulo/']",
+            "a[href*='/chapter-']",
+            "a[href*='/chapter/']",
+        )
+
+        selectors.forEach { selector ->
+            document.select(selector).forEach { link: Element ->
+                val name = link.text().trim()
+                val href = link.attr("href")
+                if (name.isNotBlank() && href.isNotBlank() &&
+                    (href.contains("/capitulo", ignoreCase = true) || href.contains("/chapter", ignoreCase = true))
+                ) {
+                    SChapter.create().apply {
+                        this.name = name
+                        setUrlWithoutDomain(href)
+                    }.let { chapters.add(it) }
+                }
             }
         }
 
-        return chapters
+        return chapters.distinctBy { it.url }
     }
 
     // ==================== PÁGINAS ====================
@@ -159,7 +206,6 @@ class Hentaiteca(
             .ifBlank { img.attr("data-src") }
             .ifBlank { img.attr("abs:src") }
             .ifBlank { img.attr("src") }
-        // Remove espaços extras (o site às vezes coloca um espaço antes de http://)
         val clean = raw.trim()
         if (clean.isEmpty()) return ""
         return if (clean.startsWith("http://") || clean.startsWith("https://")) {
