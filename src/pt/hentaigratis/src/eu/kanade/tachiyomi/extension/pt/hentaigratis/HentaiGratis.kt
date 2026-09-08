@@ -53,7 +53,6 @@ class HentaiGratis(
             val img = article.selectFirst("div.entry-content img")
             val thumb = img?.attr("src") ?: ""
 
-            // Filtra apenas thumbnails hospedadas no próprio site
             val isHostedOnSite = thumb.startsWith("https://hentaigratis.biz") ||
                 thumb.startsWith("http://hentaigratis.biz")
 
@@ -142,11 +141,9 @@ class HentaiGratis(
             val src = img.attr("src").trim()
             if (src.isBlank() || src.startsWith("data:image")) return@forEach
 
-            // Extrai o nome do arquivo da imagem e normaliza
             val fileName = src.substringAfterLast("/").substringBefore("?")
             val normalizedFileName = normalize(fileName)
 
-            // Só inclui se o nome do arquivo contiver o slug do mangá
             if (normalizedSlug.isNotEmpty() && normalizedFileName.contains(normalizedSlug)) {
                 pages.add(Page(index++, url = baseUrl, imageUrl = src))
             }
@@ -156,15 +153,13 @@ class HentaiGratis(
     }
 
     // Função para normalizar strings (remover hífens, underscores, espaços e converter para minúsculas)
-    private fun normalize(input: String): String {
-        return input.lowercase()
-            .replace("-", "")
-            .replace("_", "")
-            .replace(" ", "")
-            .replace(".jpg", "")
-            .replace(".png", "")
-            .replace(".webp", "")
-    }
+    private fun normalize(input: String): String = input.lowercase()
+        .replace("-", "")
+        .replace("_", "")
+        .replace(" ", "")
+        .replace(".jpg", "")
+        .replace(".png", "")
+        .replace(".webp", "")
 
     override fun imageUrlParse(response: Response): String = throw UnsupportedOperationException()
 
