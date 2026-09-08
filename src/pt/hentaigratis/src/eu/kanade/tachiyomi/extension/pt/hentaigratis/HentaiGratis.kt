@@ -21,7 +21,7 @@ import kotlin.time.Duration.Companion.seconds
 @Source
 class HentaiGratis(
     override val lang: String = "pt-BR",
-    override val id: Long = 2025000002L,
+    override val id: Long = 2025000002L, // ⚠️ Troque por um ID único
 ) : HttpSource() {
 
     override val name = "HentaiGrátis"
@@ -53,7 +53,11 @@ class HentaiGratis(
             val img = article.selectFirst("div.entry-content img")
             val thumb = img?.attr("src") ?: ""
 
-            if (title.isNotBlank() && href.isNotBlank() && thumb.isNotBlank()) {
+            // Filtra apenas thumbnails hospedadas no próprio site
+            val isHostedOnSite = thumb.startsWith("https://hentaigratis.biz") ||
+                thumb.startsWith("http://hentaigratis.biz")
+
+            if (title.isNotBlank() && href.isNotBlank() && thumb.isNotBlank() && isHostedOnSite) {
                 SManga.create().apply {
                     this.title = title
                     this.thumbnail_url = thumb
@@ -85,21 +89,17 @@ class HentaiGratis(
     override fun mangaDetailsParse(response: Response): SManga {
         val document = response.asJsoup()
 
-        // Título: tenta og:title, depois h1.entry-title, removendo sufixo " - Hentai Grátis"
         val rawTitle = document.selectFirst("meta[property=og:title]")?.attr("content")
             ?: document.selectFirst("h1.entry-title")?.text()
             ?: "Sem título"
         val title = rawTitle.removeSuffix(" - Hentai Grátis").removeSuffix(" - Hentai Grátis").trim()
 
-        // Capa: og:image ou primeira img do conteúdo
         val cover = document.selectFirst("meta[property=og:image]")?.attr("content")
             ?: document.selectFirst("div.entry-content img")?.attr("src") ?: ""
 
-        // Descrição: og:description ou primeiro parágrafo
         val description = document.selectFirst("meta[property=og:description]")?.attr("content")
             ?: document.selectFirst("div.entry-content p")?.text()?.trim() ?: ""
 
-        // Gêneros a partir das tags
         val genres = mutableListOf<String>()
         document.select("a[rel='tag']").forEach { genres.add(it.text().trim()) }
 
@@ -116,7 +116,6 @@ class HentaiGratis(
 
     // ==================== CAPÍTULOS ====================
     override fun chapterListParse(response: Response): List<SChapter> {
-        // Cada post é um capítulo único (todas as imagens no mesmo artigo)
         val url = response.request.url.toString()
         return listOf(
             SChapter.create().apply {
@@ -134,18 +133,37 @@ class HentaiGratis(
         val pages = mutableListOf<Page>()
         var index = 0
 
-        // Se houver mais de uma imagem, a primeira é a capa e deve ser ignorada
-        val startIdx = if (images.size > 1) 1 else 0
+        // Obtém o slug do mangá a partir da URL atual
+        val currentUrl = response.request.url.toString()
+        val mangaSlug = currentUrl.substringAfterLast("/").substringBefore("?").trim()
+        val normalizedSlug = normalize(mangaSlug)
 
-        for (i in startIdx until images.size) {
-            val img = images[i]
+        images.forEach { img: Element ->
             val src = img.attr("src").trim()
-            if (src.isNotBlank() && !src.startsWith("data:image")) {
+            if (src.isBlank() || src.startsWith("data:image")) return@forEach
+
+            // Extrai o nome do arquivo da imagem e normaliza
+            val fileName = src.substringAfterLast("/").substringBefore("?")
+            val normalizedFileName = normalize(fileName)
+
+            // Só inclui se o nome do arquivo contiver o slug do mangá
+            if (normalizedSlug.isNotEmpty() && normalizedFileName.contains(normalizedSlug)) {
                 pages.add(Page(index++, url = baseUrl, imageUrl = src))
             }
         }
 
         return pages
+    }
+
+    // Função para normalizar strings (remover hífens, underscores, espaços e converter para minúsculas)
+    private fun normalize(input: String): String {
+        return input.lowercase()
+            .replace("-", "")
+            .replace("_", "")
+            .replace(" ", "")
+            .replace(".jpg", "")
+            .replace(".png", "")
+            .replace(".webp", "")
     }
 
     override fun imageUrlParse(response: Response): String = throw UnsupportedOperationException()
