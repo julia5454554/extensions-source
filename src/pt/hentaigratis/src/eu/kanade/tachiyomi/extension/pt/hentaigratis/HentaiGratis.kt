@@ -82,7 +82,30 @@ class HentaiGratis(
         return GET(url, headers)
     }
 
-    override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
+    override fun searchMangaParse(response: Response): MangasPage {
+        val document = response.asJsoup()
+        val mangas = mutableListOf<SManga>()
+
+        document.select("article").forEach { article: Element ->
+            val titleLink = article.selectFirst("h2.entry-title a") ?: return@forEach
+            val title = titleLink.text().trim()
+            val href = titleLink.attr("href")
+            // Tenta obter thumbnail de div.entry-content img ou de div.entry-summary img
+            val img = article.selectFirst("div.entry-content img, div.entry-summary img")
+            val thumb = img?.attr("src") ?: ""
+
+            if (title.isNotBlank() && href.isNotBlank()) {
+                SManga.create().apply {
+                    this.title = title
+                    this.thumbnail_url = thumb // pode ser vazio, o app mostrará placeholder
+                    setUrlWithoutDomain(href)
+                }.let { mangas.add(it) }
+            }
+        }
+
+        val hasNextPage = document.selectFirst("a.next") != null
+        return MangasPage(mangas.distinctBy { it.url }, hasNextPage)
+    }
 
     // ==================== DETALHES ====================
     override fun mangaDetailsParse(response: Response): SManga {
@@ -132,7 +155,6 @@ class HentaiGratis(
         val pages = mutableListOf<Page>()
         var index = 0
 
-        // Extrai o slug da URL, ignorando barras finais e parâmetros
         val currentUrl = response.request.url.toString()
         val mangaSlug = currentUrl.substringAfter("hentaigratis.biz/")
             .substringBefore("?")
@@ -158,7 +180,6 @@ class HentaiGratis(
         return pages
     }
 
-    // Função para normalizar strings (remover hífens, underscores, espaços e converter para minúsculas)
     private fun normalize(input: String): String = input.lowercase()
         .replace("-", "")
         .replace("_", "")
