@@ -132,9 +132,15 @@ class HentaiGratis(
         val pages = mutableListOf<Page>()
         var index = 0
 
-        // Obtém o slug do mangá a partir da URL atual
+        // Extrai o slug da URL, ignorando barras finais e parâmetros
         val currentUrl = response.request.url.toString()
-        val mangaSlug = currentUrl.substringAfterLast("/").substringBefore("?").trim()
+        val mangaSlug = currentUrl.substringAfter("hentaigratis.biz/")
+            .substringBefore("?")
+            .trimEnd('/')
+            .split("/")
+            .lastOrNull { it.isNotBlank() }
+            ?: ""
+
         val normalizedSlug = normalize(mangaSlug)
 
         images.forEach { img: Element ->
