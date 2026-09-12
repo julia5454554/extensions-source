@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.extension.pt.hentaicomics
 
-import eu.kanade.tachiyomi.annotations.Source
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -9,29 +8,34 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
+import keiyoushi.network.rateLimit
+import okhttp3.Headers
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import java.net.URLEncoder
-import java.util.concurrent.TimeUnit
+import kotlin.time.Duration.Companion.seconds
 
 @Source
-class HentaiComics : HttpSource() {
+class HentaiComics(
+    override val lang: String = "pt-BR",
+    override val id: Long = 2025000003L, // ⚠️ Troque por um ID único se necessário
+) : HttpSource() {
 
     override val name = "HentaiComics"
     override val baseUrl = "https://hentaicomics.biz"
-    override val lang = "pt-BR"
     override val supportsLatest = true
 
-    // Rate limit e Cookie de idade
-    override val client = network.client.newBuilder()
-        .rateLimit(2, 1, TimeUnit.SECONDS)
+    override val client: OkHttpClient = network.client.newBuilder()
+        .rateLimit(2, 1.seconds)
         .build()
 
-    override fun headersBuilder() = super.headersBuilder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    override fun headersBuilder(): Headers.Builder = Headers.Builder()
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
+        .add("Referer", "$baseUrl/")
         .add("Cookie", "ageVerified=true")
 
-    // --- LISTAGEM E BUSCA ---
+    // ==================== LISTAGEM ====================
 
     override fun popularMangaRequest(page: Int): Request {
         val url = if (page == 1) "$baseUrl/top-hentais/" else "$baseUrl/top-hentais/page/$page/"
@@ -39,89 +43,111 @@ class HentaiComics : HttpSource() {
     }
 
     override fun popularMangaParse(response: Response): MangasPage {
-        val doc = response.asJsoup()
-        val mangas = doc.select("div.post").mapNotNull { element ->
+        val document = response.asJsoup()
+        val mangas = document.select("div.post").mapNotNull { element ->
             val a = element.selectFirst("a") ?: return@mapNotNull null
-            val href = a.absUrl("href").ifBlank { return@mapNotNull null }
+            val href = a.attr("href").ifBlank { return@mapNotNull null }
             val title = a.attr("title").ifBlank { a.selectFirst("img")?.attr("alt").orEmpty() }
-            val thumb = a.selectFirst("img")?.absUrl("src").orEmpty()
+            val thumb = a.selectFirst("img")?.attr("src").orEmpty()
+
+            if (title.isBlank()) return@mapNotNull null
+
             SManga.create().apply {
-                url = href
                 this.title = title
-                thumbnail_url = thumb
+                this.thumbnail_url = thumb
+                setUrlWithoutDomain(href)
             }
         }
-        // Paginação baseada na div.paginador e no link "Proxima"
-        val hasNext = doc.selectFirst("div.paginador a:contains(Proxima)") != null
-        return MangasPage(mangas, hasNext)
+
+        val hasNextPage = document.selectFirst("div.paginador a:contains(Proxima)") != null
+        return MangasPage(mangas, hasNextPage)
     }
 
     override fun latestUpdatesRequest(page: Int): Request {
-        val url = if (page == 1) "$baseUrl/" else "$baseUrl/page/$page/"
+        val url = if (page == 1) baseUrl else "$baseUrl/page/$page/"
         return GET(url, headers)
     }
 
-    override fun latestUpdatesParse(response: Response) = popularMangaParse(response)
+    override fun latestUpdatesParse(response: Response): MangasPage = popularMangaParse(response)
+
+    // ==================== BUSCA ====================
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val encoded = URLEncoder.encode(query, "UTF-8")
         val url = if (page == 1) {
-            "$baseUrl/?s=$encoded"
+            "$baseUrl/?s=$query"
         } else {
-            "$baseUrl/page/$page/?s=$encoded"
+            "$baseUrl/page/$page/?s=$query"
         }
         return GET(url, headers)
     }
 
-    override fun searchMangaParse(response: Response) = popularMangaParse(response)
+    override fun searchMangaParse(response: Response): MangasPage = popularMangaParse(response)
 
-    // --- DETALHES ---
-
-    override fun mangaDetailsRequest(manga: SManga): Request = GET(manga.url, headers)
+    // ==================== DETALHES ====================
 
     override fun mangaDetailsParse(response: Response): SManga {
-        val doc = response.asJsoup()
+        val document = response.asJsoup()
+
+        val title = document.selectFirst("h1.post-title")?.text()?.trim() ?: ""
+
+        val description = document.select("div.single-post > p")
+            .joinToString("\n") { it.text().trim() }
+            .trim()
+
+        val cover = document.selectFirst("meta[property=og:image]")?.attr("content")
+            ?: document.selectFirst("div.single-post p img")?.attr("src").orEmpty()
+
+        val genres = document.select("a[rel=tag]").map { it.text().trim() }
+
         return SManga.create().apply {
-            title = doc.selectFirst("h1.post-title")?.text()?.trim() ?: ""
-            // Descrição: pega apenas os parágrafos dentro do single-post, ignorando anúncios (que são divs)
-            description = doc.select("div.single-post > p").joinToString("\n") { it.text().trim() }.trim()
-            // Gêneros/Tags
-            genre = doc.select("a[rel=tag]").joinToString { it.text().trim() }
-            // Thumbnail
-            thumbnail_url = doc.selectFirst("meta[property=og:image]")?.attr("content")
-                ?: doc.selectFirst("div.single-post p img")?.absUrl("src").orEmpty()
+            this.title = title
+            this.thumbnail_url = cover
+            this.description = description
+            this.genre = genres.joinToString(", ")
+            this.status = SManga.COMPLETED
         }
     }
 
-    // --- CAPÍTULOS (POST ÚNICO) ---
+    // ==================== CAPÍTULOS ====================
 
-    override fun chapterListRequest(manga: SManga): Request = mangaDetailsRequest(manga)
+    override fun chapterListParse(response: Response): List<SChapter> {
+        val url = response.request.url.toString()
+        return listOf(
+            SChapter.create().apply {
+                name = "Capítulo Único"
+                chapter_number = 1f
+                setUrlWithoutDomain(url)
+            },
+        )
+    }
 
-    override fun chapterListParse(response: Response): List<SChapter> = listOf(
-        SChapter.create().apply {
-            url = response.request.url.toString()
-            name = "Capítulo Único"
-            chapter_number = 1f
-        },
-    )
-
-    // --- PÁGINAS DO CAPÍTULO ---
-
-    override fun pageListRequest(chapter: SChapter): Request = GET(chapter.url, headers)
+    // ==================== PÁGINAS ====================
 
     override fun pageListParse(response: Response): List<Page> {
-        val doc = response.asJsoup()
-        // Seleciona imagens dentro do post e filtra anúncios baseados no estilo 'text-align'
-        val images = doc.select("div.single-post img").filterNot { img ->
+        val document = response.asJsoup()
+
+        val images = document.select("div.single-post img").filterNot { img ->
             img.parents().any { parent ->
                 parent.tagName() == "div" && parent.attr("style").contains("text-align")
             }
         }
+
         return images.mapIndexedNotNull { index, img ->
-            val url = img.absUrl("src").ifBlank { img.absUrl("data-src") }
-            if (url.isNotBlank()) Page(index, imageUrl = url) else null
+            val src = img.attr("src").ifBlank { img.attr("data-src") }.trim()
+            if (src.isBlank() || src.startsWith("data:image")) {
+                null
+            } else {
+                Page(index, url = baseUrl, imageUrl = src)
+            }
         }
     }
 
-    override fun imageUrlParse(response: Response): String = ""
+    override fun imageUrlParse(response: Response): String = throw UnsupportedOperationException()
+
+    override fun imageRequest(page: Page): Request {
+        val newHeaders = headersBuilder()
+            .set("Referer", page.url)
+            .build()
+        return GET(page.imageUrl!!, newHeaders)
+    }
 }
