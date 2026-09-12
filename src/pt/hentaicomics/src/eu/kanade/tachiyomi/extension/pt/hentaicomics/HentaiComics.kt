@@ -50,7 +50,6 @@ class HentaiComics : HttpSource() {
                 thumbnail_url = thumb
             }
         }
-        
         // Paginação baseada na div.paginador e no link "Proxima"
         val hasNext = doc.selectFirst("div.paginador a:contains(Proxima)") != null
         return MangasPage(mangas, hasNext)
@@ -83,13 +82,10 @@ class HentaiComics : HttpSource() {
         val doc = response.asJsoup()
         return SManga.create().apply {
             title = doc.selectFirst("h1.post-title")?.text()?.trim() ?: ""
-            
             // Descrição: pega apenas os parágrafos dentro do single-post, ignorando anúncios (que são divs)
             description = doc.select("div.single-post > p").joinToString("\n") { it.text().trim() }.trim()
-            
             // Gêneros/Tags
             genre = doc.select("a[rel=tag]").joinToString { it.text().trim() }
-            
             // Thumbnail
             thumbnail_url = doc.selectFirst("meta[property=og:image]")?.attr("content")
                 ?: doc.selectFirst("div.single-post p img")?.absUrl("src").orEmpty()
@@ -100,15 +96,13 @@ class HentaiComics : HttpSource() {
 
     override fun chapterListRequest(manga: SManga): Request = mangaDetailsRequest(manga)
 
-    override fun chapterListParse(response: Response): List<SChapter> {
-        return listOf(
-            SChapter.create().apply {
-                url = response.request.url.toString()
-                name = "Capítulo Único"
-                chapter_number = 1f
-            },
-        )
-    }
+    override fun chapterListParse(response: Response): List<SChapter> = listOf(
+        SChapter.create().apply {
+            url = response.request.url.toString()
+            name = "Capítulo Único"
+            chapter_number = 1f
+        },
+    )
 
     // --- PÁGINAS DO CAPÍTULO ---
 
@@ -116,14 +110,12 @@ class HentaiComics : HttpSource() {
 
     override fun pageListParse(response: Response): List<Page> {
         val doc = response.asJsoup()
-        
         // Seleciona imagens dentro do post e filtra anúncios baseados no estilo 'text-align'
         val images = doc.select("div.single-post img").filterNot { img ->
             img.parents().any { parent ->
                 parent.tagName() == "div" && parent.attr("style").contains("text-align")
             }
         }
-
         return images.mapIndexedNotNull { index, img ->
             val url = img.absUrl("src").ifBlank { img.absUrl("data-src") }
             if (url.isNotBlank()) Page(index, imageUrl = url) else null
