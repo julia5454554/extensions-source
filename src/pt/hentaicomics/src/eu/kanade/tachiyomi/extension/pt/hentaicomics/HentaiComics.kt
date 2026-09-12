@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.extension.pt.hentaicomics
 
+import eu.kanade.tachiyomi.annotations.Source
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
