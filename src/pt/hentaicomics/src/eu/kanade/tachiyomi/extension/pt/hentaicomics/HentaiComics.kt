@@ -59,7 +59,14 @@ class HentaiComics(
             }
         }
 
-        val hasNextPage = document.selectFirst("div.paginador a:contains(Proxima)") != null
+        // ✅ CORREÇÃO DA PAGINAÇÃO: Verifica se existe o link para a próxima página
+        // baseado no número da página atual na URL. Mais robusto que buscar pelo texto "Proxima".
+        val currentPage = response.request.url.pathSegments
+            .lastOrNull { segment -> segment.all { it.isDigit() } }
+            ?.toIntOrNull() ?: 1
+
+        val hasNextPage = document.selectFirst("div.paginator a[href*='/page/${currentPage + 1}/']") != null
+
         return MangasPage(mangas, hasNextPage)
     }
 
