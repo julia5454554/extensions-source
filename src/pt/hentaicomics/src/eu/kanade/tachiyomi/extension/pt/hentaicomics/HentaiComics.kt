@@ -59,10 +59,12 @@ class HentaiComics(
             }
         }
 
-        // ✅ CORREÇÃO DA PAGINAÇÃO: Verifica se existe o link para a próxima página
-        // baseado no número da página atual na URL. Mais robusto que buscar pelo texto "Proxima".
+        // ✅ CORREÇÃO: Ignora segmentos vazios antes de extrair o número da página atual.
+        // Sem o .filter { it.isNotEmpty() }, o último segmento "" (da barra final) era
+        // pego por engano, fazendo currentPage sempre ser 1 e travando o scroll na página 2.
         val currentPage = response.request.url.pathSegments
-            .lastOrNull { segment -> segment.all { it.isDigit() } }
+            .filter { it.isNotEmpty() }
+            .lastOrNull { segment -> segment.all { c -> c.isDigit() } }
             ?.toIntOrNull() ?: 1
 
         val hasNextPage = document.selectFirst("div.paginator a[href*='/page/${currentPage + 1}/']") != null
