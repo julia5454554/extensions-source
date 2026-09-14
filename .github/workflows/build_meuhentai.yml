@@ -3,8 +3,20 @@ name: Build MeuHentai Extension
 on:
   push:
     branches: [ main ]
+    paths:
+      - 'src/pt/meuhentai/**'
+      - 'build-logic/**'
+      - 'core/**'
+      - 'compiler/**'
+      - '.github/workflows/meuhentai.yml'
   pull_request:
     branches: [ main ]
+    paths:
+      - 'src/pt/meuhentai/**'
+      - 'build-logic/**'
+      - 'core/**'
+      - 'compiler/**'
+      - '.github/workflows/meuhentai.yml'
   workflow_dispatch:
 
 jobs:
