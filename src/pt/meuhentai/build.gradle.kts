@@ -8,14 +8,9 @@ keiyoushi {
     name = "MeuHentai"
     versionCode = 1
     contentWarning = ContentWarning.NSFW
-    libVersion = "1.6"
-
+    libVersion = "1.4"
     source {
-        baseUrl = "https://meuhentai.com"
         lang = "pt-BR"
-    }
-
-    deeplink {
-        path("/..*")
+        baseUrl = "https://meuhentai.com"
     }
 }
