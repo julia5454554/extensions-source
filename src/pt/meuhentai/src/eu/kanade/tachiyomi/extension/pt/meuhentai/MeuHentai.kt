@@ -1,227 +1,212 @@
 package eu.kanade.tachiyomi.extension.pt.meuhentai
 
+import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.source.model.SMangaUpdate
+import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.annotation.Source
-import keiyoushi.network.get
-import keiyoushi.source.KeiSource
-import kotlinx.serialization.json.JsonElement
-import okhttp3.HttpUrl
+import keiyoushi.network.rateLimit
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
-import org.jsoup.parser.Parser
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import kotlin.time.Duration.Companion.seconds
 
 @Source
-abstract class MeuHentai : KeiSource() {
+class MeuHentai(
+    override val lang: String = "pt-BR",
+    override val id: Long = 2026000001L,
+) : HttpSource() {
 
-    override suspend fun getPopularManga(page: Int): MangasPage {
-        val url = if (page == 1) "$baseUrl/" else "$baseUrl/page/$page/"
-        val response = client.get(url)
-        return parseMangaList(response.asJsoup())
+    override val name = "MeuHentai"
+    override val baseUrl = "https://meuhentai.com"
+    override val supportsLatest = true
+
+    override val client: OkHttpClient = network.client.newBuilder()
+        .rateLimit(2, 1.seconds)
+        .build()
+
+    override fun headersBuilder(): Headers.Builder = Headers.Builder()
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
+        .add("Referer", "$baseUrl/")
+
+    // =========================
+    // Populares (Mais vistos)
+    // =========================
+
+    override fun popularMangaRequest(page: Int): Request {
+        val url = if (page == 1) {
+            "$baseUrl/?agt_sort=views".toHttpUrl()
+        } else {
+            "$baseUrl/page/$page/?agt_sort=views".toHttpUrl()
+        }
+        return GET(url, headers)
     }
 
-    override suspend fun getLatestUpdates(page: Int): MangasPage = getPopularManga(page)
+    override fun popularMangaParse(response: Response): MangasPage = parseMangaList(response)
 
-    override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        val url = "$baseUrl/".toHttpUrl().newBuilder().apply {
-            addQueryParameter("s", query)
-            if (page > 1) {
-                addEncodedPathSegments("page/$page/")
+    // =========================
+    // Recentes (Latest)
+    // =========================
+
+    override fun latestUpdatesRequest(page: Int): Request {
+        val url = if (page == 1) {
+            "$baseUrl/".toHttpUrl()
+        } else {
+            "$baseUrl/page/$page/".toHttpUrl()
+        }
+        return GET(url, headers)
+    }
+
+    override fun latestUpdatesParse(response: Response): MangasPage = parseMangaList(response)
+
+    // =========================
+    // Busca
+    // =========================
+
+    override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
+        val urlBuilder = if (page == 1) {
+            "$baseUrl/".toHttpUrl().newBuilder()
+        } else {
+            "$baseUrl/page/$page/".toHttpUrl().newBuilder()
+        }
+        urlBuilder.addQueryParameter("s", query)
+        return GET(urlBuilder.build(), headers)
+    }
+
+    override fun searchMangaParse(response: Response): MangasPage = parseMangaList(response)
+
+    // =========================
+    // Parser comum da listagem (só HQ, sem anúncios)
+    // =========================
+
+    private fun parseMangaList(response: Response): MangasPage {
+        val document = response.asJsoup()
+
+        val mangas = document
+            .select("article.agt-card--hq")
+            .filterNot { element ->
+                // Defesa extra: ignora cards com badge de anúncio
+                element.selectFirst("span.agt-badge--ad") != null
             }
-        }.build()
-        val response = client.get(url)
-        return parseMangaList(response.asJsoup())
+            .mapNotNull { element ->
+                val link = element.selectFirst("a.agt-card-link") ?: return@mapNotNull null
+                val href = link.attr("abs:href").ifBlank { return@mapNotNull null }
+                val title = element.selectFirst("h3.agt-card-title")?.text()?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+
+                SManga.create().apply {
+                    this.title = title
+                    this.thumbnail_url = element.selectFirst("img.agt-card-img")
+                        ?.attr("abs:src")
+                        ?.takeIf { it.isNotBlank() }
+                    setUrlWithoutDomain(href)
+                }
+            }
+
+        val hasNextPage = document.selectFirst("a.next.page-numbers") != null ||
+            document.selectFirst("link[rel=next]") != null
+
+        return MangasPage(mangas, hasNextPage)
     }
 
-    override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
-        val path = url.encodedPath
-        if (path.isBlank() || path == "/") return null
-        val document = client.get("$baseUrl$path").asJsoup()
-        return parseMangaDetails(document).apply {
-            setUrlWithoutDomain(path)
-        }
-    }
+    // =========================
+    // Detalhes
+    // =========================
 
-    override suspend fun fetchMangaUpdate(
-        manga: SManga,
-        chapters: List<SChapter>,
-        fetchDetails: Boolean,
-        fetchChapters: Boolean,
-    ): SMangaUpdate {
-        val document = client.get(getMangaUrl(manga)).asJsoup()
-        val updatedManga = if (fetchDetails) parseMangaDetails(document) else manga
-        val updatedChapters = if (fetchChapters) parseChapterList(document, manga.url) else chapters
-        return SMangaUpdate(updatedManga, updatedChapters)
-    }
+    override fun mangaDetailsParse(response: Response): SManga {
+        val document = response.asJsoup()
 
-    private fun parseMangaDetails(document: Document): SManga = SManga.create().apply {
-        val ogTitle = document.selectFirst("meta[property=og:title]")?.attr("content")
-        val rawTitle = document.selectFirst("h1.entry-title, h1.post-title, h1")?.text() ?: ogTitle ?: ""
-        title = Parser.unescapeEntities(rawTitle, false)
+        val title = document.selectFirst("h1.agt-single-title")?.text()?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: document.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
+            ?: ""
 
-        thumbnail_url = document.selectFirst("meta[property=og:image]")?.attr("content")?.let {
-            if (it.startsWith("/")) "$baseUrl$it" else it
-        } ?: document.selectFirst(".entry-content img, .post-content img")?.attr("src")?.let {
-            if (it.startsWith("/")) "$baseUrl$it" else it
-        }
+        val thumbnail = document.selectFirst("meta[property=og:image]")
+            ?.attr("content")
+            ?.takeIf { it.isNotBlank() }
 
-        description = document.selectFirst("meta[property=og:description]")?.attr("content")
-            ?: document.selectFirst(".entry-content")?.text()
+        val description = document.selectFirst("div.agt-single-content > p")
+            ?.text()?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: document.selectFirst("meta[property=og:description]")
+                ?.attr("content")?.trim()
 
-        val categories = document.select("a[rel='category tag']")
+        val genre = document.select("a.agt-chip--cat")
             .map { it.text().trim() }
             .filter { it.isNotBlank() }
             .distinct()
+            .joinToString(", ")
+            .takeIf { it.isNotBlank() }
 
-        genre = categories.joinToString(", ")
-        status = SManga.COMPLETED
-    }
-
-    private fun parseChapterList(document: Document, mangaUrl: String): List<SChapter> = listOf(
-        SChapter.create().apply {
-            name = "Capítulo Único"
-            setUrlWithoutDomain(mangaUrl)
-            chapter_number = 1f
-        },
-    )
-
-    override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val chapterUrl = if (chapter.url.startsWith("http")) chapter.url else {
-            "$baseUrl${if (chapter.url.startsWith("/")) chapter.url else "/${chapter.url}"}"
-        }
-        // Extrai o slug do mangá a partir da URL
-        val mangaSlug = chapterUrl.trimEnd('/').substringAfterLast('/').lowercase()
-        val pages = mutableListOf<Page>()
-        val visited = mutableSetOf<String>()
-        collectPages(chapterUrl, mangaSlug, pages, visited)
-        return pages
-    }
-
-    private suspend fun collectPages(
-        url: String,
-        mangaSlug: String,
-        pages: MutableList<Page>,
-        visited: MutableSet<String>,
-    ) {
-        if (url in visited) return
-        visited.add(url)
-
-        val document = client.get(url).asJsoup()
-
-        // Seleciona todas as imagens do diretório de uploads
-        val images = document.select("img[src*='/wp-content/uploads/']")
-        for (img in images) {
-            if (img.hasClass("thumb") || img.parents().any { it.hasClass("thumb") }) continue
-
-            val imageUrl = extractPageImageUrl(img, mangaSlug)
-            if (imageUrl != null) {
-                pages.add(Page(pages.size, imageUrl = imageUrl))
-            }
-        }
-
-        // Fallback para #img_gallery_big
-        if (pages.isEmpty()) {
-            val mainImage = document.selectFirst("#img_gallery_big")
-            if (mainImage != null) {
-                val imageUrl = extractPageImageUrl(mainImage, mangaSlug)
-                if (imageUrl != null) {
-                    pages.add(Page(pages.size, imageUrl = imageUrl))
-                }
-            }
-        }
-
-        // Procura o link da próxima página
-        val nextLink = document.selectFirst("a.botao-r[href*='/pagina/'], a[rel='next']")
-            ?: document.selectFirst("a[href*='/pagina/']")?.takeIf { it.text().contains("Próxima", ignoreCase = true) }
-        if (nextLink != null) {
-            val nextUrl = nextLink.attr("abs:href")
-            if (nextUrl.isNotBlank() && nextUrl != url) {
-                collectPages(nextUrl, mangaSlug, pages, visited)
-            }
+        return SManga.create().apply {
+            this.title = title
+            this.thumbnail_url = thumbnail
+            this.description = description
+            this.genre = genre
         }
     }
 
-    // Extrai somente URLs de imagem que contenham o slug do mangá no nome do arquivo
-    private fun extractPageImageUrl(img: Element, mangaSlug: String): String? {
-        val attrs = listOf("data-full-url", "data-original", "data-src", "data-lazy-src", "src")
-        for (attr in attrs) {
-            val value = img.attr(attr).trim()
-            if (value.isNotBlank() && isImageUrl(value)) {
-                val fullUrl = if (value.startsWith("/")) "$baseUrl$value" else value
-                if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
-                    // Verifica se o nome do arquivo contém o slug do mangá (case-insensitive)
-                    val fileName = fullUrl.substringAfterLast('/').lowercase()
-                    if (fileName.contains(mangaSlug.lowercase())) {
-                        return fullUrl
-                    }
-                }
-            }
-        }
+    // =========================
+    // Capítulos (cada post = 1 capítulo)
+    // =========================
 
-        val srcset = img.attr("srcset")
-        if (srcset.isNotBlank()) {
-            val srcsetUrls = srcset.split(",").map { it.trim().substringBefore(" ") }
-            for (url in srcsetUrls.reversed()) {
-                if (url.isNotBlank() && isImageUrl(url)) {
-                    val fullUrl = if (url.startsWith("/")) "$baseUrl$url" else url
-                    if (fullUrl.startsWith("$baseUrl/wp-content/uploads/")) {
-                        val fileName = fullUrl.substringAfterLast('/').lowercase()
-                        if (fileName.contains(mangaSlug.lowercase())) {
-                            return fullUrl
-                        }
-                    }
-                }
-            }
-        }
-
-        return null
-    }
-
-    private fun isImageUrl(url: String): Boolean {
-        return url.substringBefore('?').substringBefore('#').matches(
-            Regex(""".*\.(jpg|jpeg|png|webp)$""", RegexOption.IGNORE_CASE)
+    override fun chapterListParse(response: Response): List<SChapter> {
+        return listOf(
+            SChapter.create().apply {
+                name = "Capítulo Único"
+                setUrlWithoutDomain(response.request.url.toString())
+            },
         )
     }
 
-    override fun getFilterList(data: JsonElement?): FilterList = FilterList()
+    // =========================
+    // Páginas (imagens do conteúdo)
+    // =========================
 
-    private fun parseMangaList(document: Document): MangasPage {
-        val mangas = mutableListOf<SManga>()
-        val seenUrls = mutableSetOf<String>()
-        val elements = document.select(".lista-foto")
-        for (element in elements) {
-            val link = element.selectFirst("a.intentf") ?: element.selectFirst("a[href]") ?: continue
-            val href = link.attr("href").trim()
-            if (href.isBlank()) continue
+    override fun pageListParse(response: Response): List<Page> {
+        val document = response.asJsoup()
 
-            val mangaPath = href.substringAfter(baseUrl).ifBlank { href }
-            if (seenUrls.contains(mangaPath)) continue
-            seenUrls.add(mangaPath)
+        val images = document.select("div.agt-single-content figure.wp-block-image img")
+            .ifEmpty {
+                // Fallback: se o tema mudar e tirar o <figure>, tenta direto no container
+                document.select("div.agt-single-content img")
+            }
 
-            val mangaTitle = link.attr("title").trim()
-                .ifBlank { element.selectFirst("h2.white")?.text()?.trim().orEmpty() }
-                .ifBlank { link.text().trim() }
-            if (mangaTitle.isBlank()) continue
+        return images
+            .filterNot { img ->
+                // Remove possíveis anúncios injetados dentro de divs com text-align
+                img.parents().any { parent ->
+                    parent.tagName() == "div" &&
+                        parent.attr("style").contains("text-align", ignoreCase = true)
+                }
+            }
+            .mapNotNull { img ->
+                val src = img.attr("abs:src").takeIf { it.isNotBlank() }
+                    ?: img.attr("abs:data-src").takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+                src
+            }
+            .distinct()
+            .mapIndexed { index, url ->
+                Page(index, imageUrl = url)
+            }
+    }
 
-            val img = element.selectFirst("img.thumb")?.attr("src")?.trim()
-                ?.let { if (it.startsWith("/")) "$baseUrl$it" else it }
+    // =========================
+    // imageRequest com Referer correto
+    // =========================
 
-            mangas.add(
-                SManga.create().apply {
-                    title = Parser.unescapeEntities(mangaTitle, false)
-                    setUrlWithoutDomain(mangaPath)
-                    thumbnail_url = img
-                },
-            )
-        }
-        val hasNextPage = document.selectFirst("link[rel='next']") != null ||
-            document.selectFirst(".next, .pagination .next, a[rel='next']") != null
-        return MangasPage(mangas, hasNextPage)
+    override fun imageRequest(page: Page): Request {
+        val newHeaders = headersBuilder()
+            .set("Referer", page.url)
+            .build()
+        return GET(page.imageUrl!!, newHeaders)
     }
 }
