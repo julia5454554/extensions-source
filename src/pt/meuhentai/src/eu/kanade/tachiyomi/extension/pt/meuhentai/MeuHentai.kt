@@ -157,14 +157,12 @@ class MeuHentai(
     // Capítulos (cada post = 1 capítulo)
     // =========================
 
-    override fun chapterListParse(response: Response): List<SChapter> {
-        return listOf(
-            SChapter.create().apply {
-                name = "Capítulo Único"
-                setUrlWithoutDomain(response.request.url.toString())
-            },
-        )
-    }
+    override fun chapterListParse(response: Response): List<SChapter> = listOf(
+        SChapter.create().apply {
+            name = "Capítulo Único"
+            setUrlWithoutDomain(response.request.url.toString())
+        },
+    )
 
     // =========================
     // Páginas (imagens do conteúdo)
