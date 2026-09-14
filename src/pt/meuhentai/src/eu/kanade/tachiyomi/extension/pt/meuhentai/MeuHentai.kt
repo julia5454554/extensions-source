@@ -198,6 +198,14 @@ class MeuHentai(
     }
 
     // =========================
+    // imageUrlParse (obrigatório na libVersion 1.4 — nunca chamado,
+    // pois pageListParse é totalmente sobrescrito)
+    // =========================
+
+    override fun imageUrlParse(response: Response): String =
+        throw UnsupportedOperationException()
+
+    // =========================
     // imageRequest com Referer correto
     // =========================
 
