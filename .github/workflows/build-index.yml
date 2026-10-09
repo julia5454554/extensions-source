@@ -3,7 +3,7 @@ name: Build and Publish Index
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:
+  workflow_dispatch:   # Permite rodar manualmente
 
 permissions:
   contents: write
@@ -35,7 +35,10 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Generate index files
-        run: ./gradlew makeIndex --no-daemon
+        run: ./gradlew assembleRepo --no-daemon
+
+      - name: List generated files (Debug)
+        run: ls -la
 
       - name: Commit and push changes
         run: |
