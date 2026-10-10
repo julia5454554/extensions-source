@@ -17,7 +17,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
 import kotlin.time.Duration.Companion.seconds
 
 @Source
@@ -38,21 +37,18 @@ class NHentaiNetBr(
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .add("Referer", "$baseUrl/")
 
-    // ================= Popular =================
     override fun popularMangaRequest(page: Int): Request =
         GET("$baseUrl/popular/page/$page/", headers)
 
     override fun popularMangaParse(response: Response): MangasPage =
         parseMangaList(response.asJsoup())
 
-    // ================= Latest =================
     override fun latestUpdatesRequest(page: Int): Request =
         GET("$baseUrl/ultimos/page/$page/", headers)
 
     override fun latestUpdatesParse(response: Response): MangasPage =
         parseMangaList(response.asJsoup())
 
-    // ================= Search =================
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val url = baseUrl.toHttpUrl().newBuilder()
             .addPathSegment("page")
@@ -82,7 +78,6 @@ class NHentaiNetBr(
         return MangasPage(mangas, hasNextPage)
     }
 
-    // ================= Details =================
     override fun mangaDetailsParse(response: Response): SManga = SManga.create().apply {
         val document = response.asJsoup()
         title = document.selectFirst("h1.post-titulo")?.text()?.trim() ?: ""
@@ -93,7 +88,6 @@ class NHentaiNetBr(
         update_strategy = UpdateStrategy.ALWAYS_UPDATE
     }
 
-    // ================= Chapters =================
     override fun chapterListParse(response: Response): List<SChapter> {
         val document = response.asJsoup()
         val galleries = document.select("div.galeriaTabItem")
@@ -121,11 +115,10 @@ class NHentaiNetBr(
         }.reversed()
     }
 
-    // ================= Pages =================
     override fun pageListParse(response: Response): List<Page> {
         val document = response.asJsoup()
         val fragment = response.request.url.fragment
-        
+
         val images = if (!fragment.isNullOrEmpty()) {
             document.select("div.galeriaConteudo#$fragment img")
         } else {
