@@ -3,7 +3,7 @@ name: Build and Publish Index
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:   # Permite rodar manualmente
+  workflow_dispatch:   # Permite rodar manualmente pelo botão
 
 permissions:
   contents: write
@@ -21,29 +21,16 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Cache Gradle packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
       - name: Generate index files
-        run: ./gradlew assembleRepo --no-daemon
-
-      - name: List generated files (Debug)
-        run: ls -la
+        run: ./gradlew makeIndex --no-daemon
 
       - name: Commit and push changes
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add index.pb index.min.json
-          git diff --quiet && git diff --staged --quiet || git commit -m "chore: update custom index files"
+          git diff --quiet && git diff --staged --quiet || git commit -m "chore: update index files"
           git push origin main
