@@ -12,12 +12,12 @@ import keiyoushi.annotation.Source
 import keiyoushi.network.get
 import keiyoushi.network.rateLimit
 import keiyoushi.source.KeiSource
+import kotlinx.datetime.Instant
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import kotlin.time.Instant
 
 @Source
 class NHentaiNetBr(
@@ -82,7 +82,7 @@ class NHentaiNetBr(
         if (page > 1) {
             urlBuilder.addPathSegment("page")
             urlBuilder.addPathSegment(page.toString())
-            urlBuilder.addPathSegment("") // Garante a barra no final (trailing slash)
+            urlBuilder.addPathSegment("") 
         }
         
         val url = urlBuilder
