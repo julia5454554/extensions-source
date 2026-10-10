@@ -15,27 +15,48 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      - name: Run bootstrap script
-        run: python ext-bootstrap.py
+      # 1. Compila os APKs das suas extensões
+      - name: Build APKs
+        run: ./gradlew assembleRelease
 
-      - name: Commit and push changes
+      # 2. Prepara pastas e junta todos os APKs compilados
+      - name: Prepare APKs for inspection
         run: |
+          mkdir -p apks_to_inspect
+          mkdir -p output_repo
+          find . -type f -name "*.apk" -exec cp {} apks_to_inspect/ \;
+
+      # 3. Baixa a ferramenta oficial do Keiyoushi que gera o index.pb
+      - name: Download Extensions Inspector
+        run: |
+          INSPECTOR_URL=$(curl -s "https://api.github.com/repos/keiyoushi/extensions-inspector/releases/latest" | jq -r '.assets[0].browser_download_url')
+          curl -L "$INSPECTOR_URL" -o Inspector.jar
+
+      # 4. Executa o Inspector nos APKs para criar o index.pb e os ícones
+      - name: Generate index.pb
+        run: |
+          java -jar Inspector.jar "apks_to_inspect" "output_repo"
+
+      # 5. Publica o resultado diretamente na branch 'repo' (usada pelo GitHub Pages)
+      - name: Deploy to repo branch
+        run: |
+          cd output_repo
+          git init
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add index.pb index.min.json
-          git diff --quiet && git diff --staged --quiet || git commit -m "chore: update custom index files"
-          git push origin main
+          git checkout -b repo
+          git add .
+          git commit -m "chore: update extension repository index"
+          git push -f https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git repo
