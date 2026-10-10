@@ -19,5 +19,5 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      - name: List relevant tasks
-        run: ./gradlew tasks --all | grep -iE 'index|repo|pb|json' || echo "Nenhuma tarefa encontrada com esses nomes."
+      - name: List root tasks
+        run: ./gradlew tasks --all | grep -v ':'
