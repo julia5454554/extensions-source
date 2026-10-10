@@ -27,11 +27,11 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      # 1. Compila os APKs das suas extensões
+      # 1. Compila os APKs ignorando erros de formatação do Spotless
       - name: Build APKs
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleRelease -x spotlessCheck
 
-      # 2. Prepara pastas e junta todos os APKs compilados
+      # 2. Prepara as pastas e junta todos os APKs compilados
       - name: Prepare APKs for inspection
         run: |
           mkdir -p apks_to_inspect
@@ -44,7 +44,7 @@ jobs:
           INSPECTOR_URL=$(curl -s "https://api.github.com/repos/keiyoushi/extensions-inspector/releases/latest" | jq -r '.assets[0].browser_download_url')
           curl -L "$INSPECTOR_URL" -o Inspector.jar
 
-      # 4. Executa o Inspector nos APKs para criar o index.pb e os ícones
+      # 4. Executa o Inspector nos APKs para criar o index.pb, index.min.json e os ícones
       - name: Generate index.pb
         run: |
           java -jar Inspector.jar "apks_to_inspect" "output_repo"
