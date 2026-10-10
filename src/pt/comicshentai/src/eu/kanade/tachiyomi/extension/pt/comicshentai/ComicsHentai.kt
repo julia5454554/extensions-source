@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.annotation.Source
 import keiyoushi.network.rateLimit
 import okhttp3.Headers
@@ -24,7 +25,7 @@ import kotlin.time.Duration.Companion.seconds
 @Source
 class ComicsHentai(
     override val lang: String = "pt-BR",
-    override val id: Long = 0L,
+    override val id: Long = 0L, // troque por um ID único na publicação
 ) : HttpSource() {
 
     override val name = "ComicsHentai"
@@ -70,17 +71,8 @@ class ComicsHentai(
 
         // Palavras que indicam anúncio
         val adKeywords = listOf(
-            "download",
-            "grátis",
-            "acesse",
-            "clique",
-            "patrocinado",
-            "publicidade",
-            "site",
-            "anúncio",
-            "ads",
-            "vazou",
-            "torrent",
+            "download", "grátis", "acesse", "clique", "patrocinado",
+            "publicidade", "site", "anúncio", "ads", "vazou", "torrent"
         )
 
         for (i in 0 until jsonArray.length()) {
@@ -168,7 +160,7 @@ class ComicsHentai(
                 name = "Capítulo Único"
                 chapter_number = 1f
                 setUrlWithoutDomain(basePath)
-            },
+            }
         )
     }
 
